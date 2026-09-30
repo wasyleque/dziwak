@@ -1,0 +1,16 @@
+[package]
+name = "dziwak"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+dziwak-core = { path = "../core" }
+eframe = { version = "0.33", default-features = false, features = ["glow", "wayland", "default_fonts"] }
+rfd = { version = "0.15", default-features = false, features = ["xdg-portal", "async-std"] }
+dziwak-ai = { path = "../ai", optional = true }
+
+[features]
+# Usuwanie tła modelem AI na CPU (tract). Budowanie bez AI: --no-default-features
+default = ["ai"]
+ai = ["dep:dziwak-ai"]
