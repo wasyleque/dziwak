@@ -1,0 +1,20 @@
+[workspace]
+resolver = "2"
+members = ["crates/core", "crates/app", "crates/ai"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "GPL-3.0-or-later"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+panic = "abort"
+strip = true
+
+# szybsze buildy debug przy zachowaniu wydajnosci operacji na pikselach
+[profile.dev.package."*"]
+opt-level = 2
+[profile.dev]
+opt-level = 1
