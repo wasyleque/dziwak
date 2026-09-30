@@ -1,7 +1,7 @@
 # Maintainer: wasyleque <wasyl@o2.pl>
 pkgname=dziwak-git
 _pkgname=dziwak
-pkgver=0.1.0.r0.g0000000
+pkgver=0.1.0.r22.g3d0f92b
 pkgrel=1
 pkgdesc="Lightweight GIMP-style raster image editor in Rust for Wayland (Omarchy), with local CPU background removal"
 arch=('x86_64' 'aarch64')

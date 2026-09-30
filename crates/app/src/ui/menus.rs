@@ -501,6 +501,10 @@ pub fn render_menu_bar(
                     app.show_about_dialog = true;
                     ui.close();
                 }
+                if ui.button(tr("♥ Wesprzyj projekt (PayPal)...")).clicked() {
+                    super::dialogs::open_url(super::dialogs::DONATE_URL);
+                    ui.close();
+                }
             });
         });
     });

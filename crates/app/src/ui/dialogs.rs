@@ -404,6 +404,17 @@ pub fn render_error_dialog(app: &mut DziwakApp, ctx: &egui::Context) {
     }
 }
 
+/// Strona projektu.
+pub const PROJECT_URL: &str = "https://github.com/wasyleque/dziwak";
+/// Darowizna PayPal dla autora (wasyl@o2.pl).
+pub const DONATE_URL: &str =
+    "https://www.paypal.com/donate/?business=wasyl%40o2.pl&item_name=Dziwak";
+
+/// Otwiera adres w domyślnej przeglądarce (xdg-open), bez blokowania interfejsu.
+pub fn open_url(url: &str) {
+    let _ = std::process::Command::new("xdg-open").arg(url).spawn();
+}
+
 /// Wyświetla okno dialogowe 'O programie'.
 pub fn render_about_dialog(app: &mut DziwakApp, ctx: &egui::Context) {
     if app.show_about_dialog {
@@ -418,6 +429,24 @@ pub fn render_about_dialog(app: &mut DziwakApp, ctx: &egui::Context) {
                 ui.label(tr("Edytor grafiki rastrowej dla Omarchy Linux / Wayland"));
                 ui.label(format!("{} {}", tr("Wersja"), env!("CARGO_PKG_VERSION")));
                 ui.label(tr("Licencja: GNU General Public License v3.0 or later"));
+                ui.label(format!("{}: Piotr Wasilewski", tr("Autor")));
+                if ui.link("github.com/wasyleque/dziwak").clicked() {
+                    open_url(PROJECT_URL);
+                }
+                ui.add_space(8.0);
+                ui.label(tr("Podoba ci się Dziwak? Wesprzyj jego rozwój:"));
+                if ui
+                    .add(
+                        egui::Button::new(
+                            egui::RichText::new(tr("♥ Wesprzyj przez PayPal")).strong(),
+                        )
+                        .fill(egui::Color32::from_rgb(0, 112, 186)),
+                    )
+                    .on_hover_text(DONATE_URL)
+                    .clicked()
+                {
+                    open_url(DONATE_URL);
+                }
                 ui.add_space(8.0);
                 if ui.button(tr("OK")).clicked() {
                     app.show_about_dialog = false;

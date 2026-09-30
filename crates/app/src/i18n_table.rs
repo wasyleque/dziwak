@@ -494,4 +494,20 @@ pub static TABLE: &[(&str, &str, &str)] = &[
         "Measure: drag over canvas",
         "Medida: arrastrar sobre el lienzo",
     ),
+    ("Autor", "Author", "Autor"),
+    (
+        "Podoba ci się Dziwak? Wesprzyj jego rozwój:",
+        "Enjoying Dziwak? Support its development:",
+        "¿Te gusta Dziwak? Apoya su desarrollo:",
+    ),
+    (
+        "♥ Wesprzyj przez PayPal",
+        "♥ Donate via PayPal",
+        "♥ Donar con PayPal",
+    ),
+    (
+        "♥ Wesprzyj projekt (PayPal)...",
+        "♥ Support the project (PayPal)...",
+        "♥ Apoyar el proyecto (PayPal)...",
+    ),
 ];

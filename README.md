@@ -77,3 +77,7 @@ Narzędzia mają skróty jak w GIMP 2.10.
 ## Rozwój
 
 Reguły projektu i plan etapów: `AGENTS.md`. Testy: `cargo test --workspace` (test z modelem AI: `cargo test -p dziwak-ai -- --ignored`).
+
+## Autor i wsparcie
+
+Autor: **Piotr Wasilewski**. Jeśli Dziwak ci się podoba, możesz wesprzeć jego rozwój przez [PayPal](https://www.paypal.com/donate/?business=wasyl%40o2.pl&item_name=Dziwak) (również w programie: Pomoc → Wesprzyj projekt).

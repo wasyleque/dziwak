@@ -77,3 +77,7 @@ Tools have shortcuts like in GIMP 2.10.
 ## Development
 
 Project rules and roadmap: `AGENTS.md`. Tests: `cargo test --workspace` (AI model test: `cargo test -p dziwak-ai -- --ignored`).
+
+## Author and support
+
+Author: **Piotr Wasilewski**. If you enjoy Dziwak, you can support its development via [PayPal](https://www.paypal.com/donate/?business=wasyl%40o2.pl&item_name=Dziwak) (also in the app: Help → Support the project).
