@@ -1,0 +1,10 @@
+[package]
+name = "dziwak-ai"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# Usuwanie tła modelem U²-Net-p na CPU (czysty Rust, bez ONNX Runtime i GPU).
+[dependencies]
+tract-onnx = "0.23"
+thiserror = "2.0"
