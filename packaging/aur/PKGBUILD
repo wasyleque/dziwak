@@ -1,0 +1,57 @@
+# Maintainer: wasyleque <wasyl@o2.pl>
+pkgname=dziwak-git
+_pkgname=dziwak
+pkgver=0.1.0.r0.g0000000
+pkgrel=1
+pkgdesc="Lightweight GIMP-style raster image editor in Rust for Wayland (Omarchy), with local CPU background removal"
+arch=('x86_64' 'aarch64')
+url="https://github.com/wasyleque/dziwak"
+license=('GPL-3.0-or-later')
+depends=('gcc-libs' 'glibc' 'libglvnd' 'libxkbcommon' 'wayland' 'fontconfig' 'xdg-desktop-portal' 'hicolor-icon-theme')
+makedepends=('cargo' 'git')
+optdepends=('noto-fonts: default font for the Text tool')
+provides=("$_pkgname")
+conflicts=("$_pkgname")
+options=('!debug')
+source=("$_pkgname::git+https://github.com/wasyleque/dziwak.git"
+        "u2netp.onnx::https://github.com/danielgatis/rembg/releases/download/v0.0.0/u2netp.onnx")
+noextract=('u2netp.onnx')
+sha256sums=('SKIP'
+            '309c8469258dda742793dce0ebea8e6dd393174f89934733ecc8b14c76f4ddd8')
+
+pkgver() {
+  cd "$_pkgname"
+  local base
+  base=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)
+  printf "%s.r%s.g%s" "$base" "$(git rev-list --count HEAD)" "$(git rev-parse --short=7 HEAD)"
+}
+
+prepare() {
+  cd "$_pkgname"
+  export RUSTUP_TOOLCHAIN=stable
+  cargo fetch --locked --target "$(rustc -vV | sed -n 's/host: //p')"
+}
+
+build() {
+  cd "$_pkgname"
+  export RUSTUP_TOOLCHAIN=stable
+  export CARGO_TARGET_DIR=target
+  cargo build --frozen --release -p dziwak
+}
+
+check() {
+  cd "$_pkgname"
+  export RUSTUP_TOOLCHAIN=stable
+  export CARGO_TARGET_DIR=target
+  cargo test --frozen --release -p dziwak-core
+}
+
+package() {
+  cd "$_pkgname"
+  install -Dm755 target/release/dziwak "$pkgdir/usr/bin/dziwak"
+  install -Dm644 data/dziwak.desktop "$pkgdir/usr/share/applications/dziwak.desktop"
+  install -Dm644 data/dziwak.svg "$pkgdir/usr/share/icons/hicolor/scalable/apps/dziwak.svg"
+  install -Dm644 README.md README.en.md -t "$pkgdir/usr/share/doc/$_pkgname/"
+  # Model U²-Net-p (Apache-2.0) do usuwania tła AI
+  install -Dm644 "$srcdir/u2netp.onnx" "$pkgdir/usr/share/dziwak/models/u2netp.onnx"
+}

@@ -18,12 +18,28 @@ pub const INPUT_SIZE: usize = 320;
 const MEAN: [f32; 3] = [0.485, 0.456, 0.406];
 const STD: [f32; 3] = [0.229, 0.224, 0.225];
 
-/// Ścieżka domyślnego modelu: $XDG_DATA_HOME (lub $HOME/.local/share) + /dziwak/models/u2netp.onnx
+/// Ścieżka modelu: pierwszy istniejący z $XDG_DATA_HOME (lub ~/.local/share) i $XDG_DATA_DIRS
+/// (domyślnie /usr/local/share:/usr/share) + /dziwak/models/u2netp.onnx; gdy żaden nie istnieje — ścieżka użytkownika.
 pub fn default_model_path() -> Option<PathBuf> {
-    std::env::var_os("XDG_DATA_HOME")
+    let rel = "dziwak/models/u2netp.onnx";
+    let user = std::env::var_os("XDG_DATA_HOME")
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share")))
-        .map(|d| d.join("dziwak/models/u2netp.onnx"))
+        .map(|d| d.join(rel));
+    // Katalogi systemowe (pakiet dystrybucji instaluje model do /usr/share/dziwak/models)
+    let data_dirs = std::env::var("XDG_DATA_DIRS")
+        .ok()
+        .filter(|v| !v.is_empty())
+        .unwrap_or_else(|| "/usr/local/share:/usr/share".to_string());
+    let system = data_dirs
+        .split(':')
+        .filter(|d| !d.is_empty())
+        .map(|d| PathBuf::from(d).join(rel));
+    user.clone()
+        .into_iter()
+        .chain(system)
+        .find(|p| p.exists())
+        .or(user)
 }
 
 pub struct BgRemover {
