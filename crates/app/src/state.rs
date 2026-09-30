@@ -339,23 +339,55 @@ pub fn create_demo_document(width: u32, height: u32) -> Document {
 pub enum ActiveTool {
     /// Przesuwanie widoku płótna.
     Pan,
-    /// Malowanie pędzlem okrągłym.
+    /// Przesuwanie pikseli aktywnej warstwy lub zaznaczenia (M).
+    Move,
+    /// Malowanie pędzlem okrągłym (P).
     #[default]
     Brush,
-    /// Wymazywanie gumką okrągłą.
+    /// Malowanie ołówkiem z twardymi krawędziami (N).
+    Pencil,
+    /// Malowanie aerografem nakładanym w czasie (A).
+    Airbrush,
+    /// Wymazywanie gumką okrągłą (Shift+E).
     Eraser,
-    /// Wypełnianie spójnego obszaru (kubełek, G).
+    /// Wypełnianie spójnego obszaru (kubełek, Shift+B).
     Bucket,
-    /// Gradient liniowy (Shift+G / D).
+    /// Gradient liniowy (G).
     Gradient,
-    /// Próbkowanie koloru (pipeta, I).
+    /// Próbkowanie koloru (pipeta, O).
     Eyedropper,
-    /// Zaznaczenie prostokątne (M).
+    /// Zaznaczenie prostokątne (R).
     SelectRect,
-    /// Zaznaczenie eliptyczne (Shift+M).
+    /// Zaznaczenie eliptyczne (E).
     SelectEllipse,
     /// Różdżka: zaznaczenie obszaru o podobnym kolorze (U).
     MagicWand,
+    /// Kadrowanie dokumentu (Shift+C).
+    Crop,
+    /// Zaznaczenie odręczne (lasso, F).
+    SelectFree,
+    /// Zaznaczenie wg koloru (Shift+O).
+    SelectColor,
+    /// Obrót aktywnej warstwy (Shift+R).
+    Rotate,
+    /// Skalowanie aktywnej warstwy (Shift+T).
+    Scale,
+    /// Odbicie aktywnej warstwy (Shift+F).
+    Flip,
+    /// Klonowanie ze źródła (C).
+    Clone,
+    /// Rozmazywanie pędzlem (Shift+S).
+    Smudge,
+    /// Rozjaśnianie / ściemnianie (Shift+D).
+    DodgeBurn,
+    /// Rozmywanie / wyostrzanie pędzlem (Shift+U).
+    BlurSharpen,
+    /// Wstawianie tekstu czcionką (T).
+    Text,
+    /// Lupa: powiększanie i pomniejszanie widoku (Z).
+    Zoom,
+    /// Miarka: mierzenie odległości i kąta na płótnie (Shift+M).
+    Measure,
 }
 
 /// Kształt bieżącego zaznaczenia do rysowania maszerujących mrówek.
@@ -364,6 +396,22 @@ pub enum SelectionShape {
     #[default]
     Rect,
     Ellipse,
+}
+
+/// Tryb narzędzia Rozjaśnianie / Ściemnianie (T9).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum DodgeBurnType {
+    #[default]
+    Dodge,
+    Burn,
+}
+
+/// Tryb narzędzia Rozmywanie / Wyostrzanie (T9).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum BlurSharpenType {
+    #[default]
+    Blur,
+    Sharpen,
 }
 
 /// Rodzaj i parametry aktywnego filtra obrazu (E10).
@@ -432,6 +480,150 @@ pub struct FilterDialog {
     pub last_changed_rect: Option<Rect>,
 }
 
+/// Rodzaj i parametry aktywnego przekształcenia warstwy (T6).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum LayerTransformKind {
+    /// Obrót o kąt w stopniach (-180°..=180°).
+    Rotate { angle_deg: f32 },
+    /// Skalowanie do zadanego rozmiaru (szerokość x wysokość) z zachowaniem proporcji.
+    Scale {
+        width: u32,
+        height: u32,
+        orig_width: u32,
+        orig_height: u32,
+        keep_aspect: bool,
+    },
+    /// Odbicie w osi poziomej lub pionowej.
+    Flip { horizontal: bool },
+}
+
+impl LayerTransformKind {
+    /// Zwraca tytuł okna dialogowego dla danego przekształcenia.
+    pub fn title(&self) -> &'static str {
+        match self {
+            Self::Rotate { .. } => "Obrót warstwy",
+            Self::Scale { .. } => "Skalowanie warstwy",
+            Self::Flip { .. } => "Odbicie warstwy",
+        }
+    }
+
+    /// Wykonuje przekształcenie na warstwie kafelkowej.
+    pub fn apply(&self, src: &TiledLayer) -> TiledLayer {
+        match *self {
+            Self::Rotate { angle_deg } => {
+                let rad = angle_deg.to_radians();
+                dziwak_core::rotate_layer_centered(src, rad)
+            }
+            Self::Scale { width, height, .. } => {
+                dziwak_core::scale_layer_centered(src, width, height)
+            }
+            Self::Flip { horizontal } => {
+                if horizontal {
+                    dziwak_core::flip_horizontal(src)
+                } else {
+                    dziwak_core::flip_vertical(src)
+                }
+            }
+        }
+    }
+}
+
+/// Stan okna dialogowego przekształcenia warstwy z podglądem na żywo i debouncem (~100 ms).
+pub struct TransformDialog {
+    /// Rodzaj transformacji i jej parametry.
+    pub kind: LayerTransformKind,
+    /// Czy podgląd na żywo na płótnie jest aktywny.
+    pub preview: bool,
+    /// Klon warstwy sprzed przekształcenia (do przywracania i historii).
+    pub original_layer: Layer,
+    /// Indeks przekształcanej warstwy.
+    pub target_layer_idx: usize,
+    /// Znacznik czasu ostatniego zaaplikowania podglądu (debounce).
+    pub last_apply_time: Option<Instant>,
+    /// Czy parametry uległy zmianie w trakcie debounce.
+    pub pending_apply: bool,
+}
+
+/// Stan okna dialogowego "Skaluj obraz..." (T7).
+#[derive(Clone, Debug)]
+pub struct ScaleImageDialog {
+    /// Nowa szerokość dokumentu.
+    pub width: u32,
+    /// Nowa wysokość dokumentu.
+    pub height: u32,
+    /// Początkowa szerokość dokumentu przed skalowaniem.
+    pub orig_width: u32,
+    /// Początkowa wysokość dokumentu przed skalowaniem.
+    pub orig_height: u32,
+    /// Czy zachowywać proporcje boków przy zmianie wymiarów.
+    pub keep_aspect: bool,
+}
+
+/// Stan okna dialogowego "Rozmiar płótna..." (T7).
+#[derive(Clone, Debug)]
+pub struct CanvasSizeDialog {
+    /// Nowa szerokość płótna.
+    pub width: u32,
+    /// Nowa wysokość płótna.
+    pub height: u32,
+    /// Początkowa szerokość dokumentu przed zmianą rozmiaru płótna.
+    pub orig_width: u32,
+    /// Początkowa wysokość dokumentu przed zmianą rozmiaru płótna.
+    pub orig_height: u32,
+    /// Przesunięcie zawartości w osi X.
+    pub offset_x: i32,
+    /// Przesunięcie zawartości w osi Y.
+    pub offset_y: i32,
+}
+
+/// Stan okna dialogowego "Tekst" (T10).
+pub struct TextDialog {
+    /// Wprowadzony tekst (wieloliniowy).
+    pub text: String,
+    /// Rodzina czcionki (domyślnie "Noto Sans").
+    pub font_family: String,
+    /// Rozmiar czcionki w pikselach.
+    pub font_size: f32,
+    /// Pozycja tekstu na płótnie (x, y) w pikselach.
+    pub pos: (i32, i32),
+    /// Kolor tekstu.
+    pub color: egui::Color32,
+    /// Wygenerowana maska tekstu do podglądu.
+    pub preview_mask: Option<dziwak_core::text::TextMask>,
+    /// Komunikat błędu jeśli nie udało się załadować czcionki lub wyrenderować maski.
+    pub error: Option<String>,
+}
+
+/// Wyszukuje ścieżkę do pliku czcionki przez `fc-match -f %{file} <rodzina>` z awaryjnymi ścieżkami systemowymi (T10).
+pub fn find_font_path(family: &str) -> Option<PathBuf> {
+    if let Ok(output) = std::process::Command::new("fc-match")
+        .arg("-f")
+        .arg("%{file}")
+        .arg(family)
+        .output()
+    {
+        if output.status.success() {
+            if let Ok(s) = String::from_utf8(output.stdout) {
+                let p = PathBuf::from(s.trim());
+                if p.exists() {
+                    return Some(p);
+                }
+            }
+        }
+    }
+    for fallback in [
+        "/usr/share/fonts/noto/NotoSans-Regular.ttf",
+        "/usr/share/fonts/TTF/DejaVuSans.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    ] {
+        let p = PathBuf::from(fallback);
+        if p.exists() {
+            return Some(p);
+        }
+    }
+    None
+}
+
 /// Główny stan aplikacji Dziwak.
 pub struct DziwakApp {
     /// Aktywny dokument graficzny.
@@ -482,6 +674,8 @@ pub struct DziwakApp {
     pub is_painting: bool,
     /// Ostatnia pozycja pociągnięcia na płótnie (x, y).
     pub last_stroke_pos: Option<(f32, f32)>,
+    /// Czas ostatniego naniesienia śladu aerografu (A).
+    pub last_airbrush_dab: Option<Instant>,
     /// Akumulowany dystans od ostatniego punktu pociągnięcia.
     pub stroke_carry: f32,
     /// Indeks aktywnej warstwy w dokumencie.
@@ -496,6 +690,14 @@ pub struct DziwakApp {
     pub request_focus_rename: bool,
     /// Aktywne okno dialogowe filtra obrazu (jeśli otwarte).
     pub filter_dialog: Option<FilterDialog>,
+    /// Aktywne okno dialogowe przekształcenia warstwy (T6).
+    pub transform_dialog: Option<TransformDialog>,
+    /// Aktywne okno dialogowe skalowania całego obrazu (T7).
+    pub scale_image_dialog: Option<ScaleImageDialog>,
+    /// Aktywne okno dialogowe zmiany rozmiaru płótna (T7).
+    pub canvas_size_dialog: Option<CanvasSizeDialog>,
+    /// Aktywne okno dialogowe wstawiania tekstu (T10).
+    pub text_dialog: Option<TextDialog>,
     /// Kolor tła (używany m.in. w gradiencie).
     pub bg_color: egui::Color32,
     /// Tolerancja wypełniania kubełkiem (0..=255).
@@ -510,10 +712,46 @@ pub struct DziwakApp {
     pub gradient_drag_start: Option<egui::Pos2>,
     /// Bieżący punkt przeciągania gradientu w współrzędnych płótna.
     pub gradient_drag_current: Option<egui::Pos2>,
+    /// Punkt początkowy przeciągania narzędziem Przesuwanie (M) w współrzędnych płótna.
+    pub move_drag_start: Option<egui::Pos2>,
+    /// Kopia zapasowa warstwy sprzed rozpoczęcia bieżącego przesuwania.
+    pub move_initial_layer: Option<Layer>,
+    /// Kopia zapasowa zaznaczenia sprzed rozpoczęcia bieżącego przesuwania.
+    pub move_initial_selection: Option<Selection>,
+    /// Czy trwa aktywne przesuwanie myszą (narzędzie Move).
+    pub is_moving: bool,
+    /// Bieżący prostokąt kadrowania zatwierdzany klawiszem Enter (T2).
+    pub crop_rect: Option<dziwak_core::Rect>,
+    /// Początek przeciągania ramki kadrowania na płótnie.
+    pub crop_drag_start: Option<egui::Pos2>,
+    /// Bieżąca pozycja kursora podczas przeciągania ramki kadrowania.
+    pub crop_drag_current: Option<egui::Pos2>,
+    /// Punkty wielokąta dla narzędzia Zaznaczenie odręczne (F, T3).
+    pub free_select_points: Vec<(f32, f32)>,
+    /// Tryb łączenia maski dla zaznaczenia odręcznego (Replace / Add / Subtract / Intersect).
+    pub free_select_mode: dziwak_core::selection::SelectMode,
+    /// Czy trwa aktywne tworzenie zaznaczenia odręcznego.
+    pub is_free_selecting: bool,
     /// Ścieżka bieżącego pliku (None dla nowego dokumentu).
     pub current_file_path: Option<PathBuf>,
     /// Czy dokument posiada niezapisane modyfikacje (E13).
     pub is_modified: bool,
+    /// Punkt źródłowy klonowania (x, y) w przestrzeni płótna (C, T8).
+    pub clone_source: Option<(f32, f32)>,
+    /// Stałe przesunięcie klonowania (dx, dy) dla trybu wyrównanego (T8).
+    pub clone_offset: Option<(i32, i32)>,
+    /// Kopia warstwy pikseli pobrana na początku pociągnięcia klonowania (T8).
+    pub clone_source_layer: Option<dziwak_core::TiledLayer>,
+    /// Siła rozmazywania pędzlem (Shift+S, T9).
+    pub smudge_rate: f32,
+    /// Aktywny tryb rozjaśniania/ściemniania (Shift+D, T9).
+    pub dodge_burn_type: DodgeBurnType,
+    /// Ekspozycja dla rozjaśniania/ściemniania (T9).
+    pub dodge_burn_exposure: f32,
+    /// Aktywny tryb rozmywania/wyostrzania (Shift+U, T9).
+    pub blur_sharpen_type: BlurSharpenType,
+    /// Siła rozmywania/wyostrzania (T9).
+    pub blur_sharpen_rate: f32,
     /// Doki schowane klawiszem Tab (M28).
     pub docks_hidden: bool,
     /// Ostatnio ustawiony tytuł okna (do unikania nadmiarowych wywołań ViewportCommand).
@@ -544,6 +782,16 @@ pub struct DziwakApp {
     pub ai_rx: Option<std::sync::mpsc::Receiver<Result<Vec<u8>, String>>>,
     /// Czy wynik AI ma zostać zaznaczeniem (true) czy usunąć tło z warstwy (false).
     pub ai_as_selection: bool,
+    /// Początek przeciągania obszaru lupy na ekranie (T11).
+    pub zoom_drag_start: Option<egui::Pos2>,
+    /// Bieżąca pozycja przeciągania obszaru lupy na ekranie (T11).
+    pub zoom_drag_current: Option<egui::Pos2>,
+    /// Początek linii pomiarowej miarki na płótnie (T11).
+    pub measure_start: Option<egui::Pos2>,
+    /// Koniec linii pomiarowej miarki na płótnie (T11).
+    pub measure_end: Option<egui::Pos2>,
+    /// Czy użytkownik aktualnie przeciąga miarkę (T11).
+    pub is_measuring: bool,
 }
 
 /// Pojedynczy wpis w pamięci podręcznej miniatur warstw.
@@ -651,6 +899,7 @@ impl DziwakApp {
             brush_color: egui::Color32::from_rgb(30, 30, 30),
             is_painting: false,
             last_stroke_pos: None,
+            last_airbrush_dab: None,
             stroke_carry: 0.0,
             active_layer_index,
             is_dragging_opacity: false,
@@ -658,6 +907,10 @@ impl DziwakApp {
             editing_layer_name: String::new(),
             request_focus_rename: false,
             filter_dialog: None,
+            transform_dialog: None,
+            scale_image_dialog: None,
+            canvas_size_dialog: None,
+            text_dialog: None,
             bg_color: egui::Color32::WHITE,
             fill_tolerance: 32,
             fill_sample_all_layers: true,
@@ -665,8 +918,26 @@ impl DziwakApp {
             pipette_radius: 0,
             gradient_drag_start: None,
             gradient_drag_current: None,
+            move_drag_start: None,
+            move_initial_layer: None,
+            move_initial_selection: None,
+            is_moving: false,
+            crop_rect: None,
+            crop_drag_start: None,
+            crop_drag_current: None,
+            free_select_points: Vec::new(),
+            free_select_mode: dziwak_core::selection::SelectMode::Replace,
+            is_free_selecting: false,
             current_file_path: None,
             is_modified: false,
+            clone_source: None,
+            clone_offset: None,
+            clone_source_layer: None,
+            smudge_rate: 0.5,
+            dodge_burn_type: DodgeBurnType::Dodge,
+            dodge_burn_exposure: 0.5,
+            blur_sharpen_type: BlurSharpenType::Blur,
+            blur_sharpen_rate: 0.5,
             docks_hidden: false,
             last_window_title: String::new(),
             pending_flatten_save: None,
@@ -682,6 +953,11 @@ impl DziwakApp {
             thumbnail_rgba_buf: Vec::with_capacity(32 * 32),
             ai_rx: None,
             ai_as_selection: false,
+            zoom_drag_start: None,
+            zoom_drag_current: None,
+            measure_start: None,
+            measure_end: None,
+            is_measuring: false,
         }
     }
 
@@ -854,9 +1130,11 @@ impl DziwakApp {
             return;
         }
 
-        let mode = match self.active_tool {
-            ActiveTool::Brush => BrushMode::Paint,
-            ActiveTool::Eraser => BrushMode::Erase,
+        let (mode, hardness) = match self.active_tool {
+            ActiveTool::Brush => (BrushMode::Paint, self.brush_hardness),
+            ActiveTool::Pencil => (BrushMode::Paint, 1.0),
+            ActiveTool::Airbrush => (BrushMode::Paint, self.brush_hardness),
+            ActiveTool::Eraser => (BrushMode::Erase, self.brush_hardness),
             _ => return,
         };
 
@@ -864,7 +1142,6 @@ impl DziwakApp {
         let layer = &mut self.document.layers[layer_idx];
 
         let radius = (self.brush_size * 0.5).max(0.5);
-        let hardness = self.brush_hardness;
         let opacity = self.brush_opacity;
         let color = Rgba8::from_straight(
             self.brush_color.r(),
@@ -882,6 +1159,178 @@ impl DziwakApp {
         if let Some(rect) = apply_dab(
             layer, cx, cy, radius, hardness, opacity, color, mode, sel_arg,
         ) {
+            self.mark_rect_dirty(rect);
+            self.bump_layer_version(layer_idx);
+        }
+    }
+
+    /// Ustawia punkt źródłowy dla narzędzia Klonowanie (T8).
+    pub fn set_clone_source(&mut self, src: (f32, f32)) {
+        self.clone_source = Some(src);
+        self.clone_offset = None;
+    }
+
+    /// Rozpoczyna pociągnięcie klonowania w zadanym punkcie płótna (T8).
+    pub fn start_clone_stroke(&mut self, p: (f32, f32)) {
+        if self.document.layers.is_empty() || self.clone_source.is_none() {
+            return;
+        }
+        self.push_history();
+        self.is_painting = true;
+
+        let layer_idx = self.active_layer_index.min(self.document.layers.len() - 1);
+        self.clone_source_layer = Some(self.document.layers[layer_idx].pixels.clone());
+
+        if self.clone_offset.is_none() {
+            if let Some(src) = self.clone_source {
+                self.clone_offset =
+                    Some(((src.0 - p.0).round() as i32, (src.1 - p.1).round() as i32));
+            }
+        }
+
+        self.apply_clone_dab(p.0, p.1);
+        self.last_stroke_pos = Some(p);
+    }
+
+    /// Nanosi pojedynczy ślad klonowania na aktywną warstwę (T8).
+    pub fn apply_clone_dab(&mut self, cx: f32, cy: f32) {
+        if self.document.layers.is_empty() {
+            return;
+        }
+        let Some(offset) = self.clone_offset else {
+            return;
+        };
+        let Some(source_layer) = &self.clone_source_layer else {
+            return;
+        };
+        let layer_idx = self.active_layer_index.min(self.document.layers.len() - 1);
+        let layer = &mut self.document.layers[layer_idx];
+
+        let radius = (self.brush_size * 0.5).max(0.5);
+        let hardness = self.brush_hardness;
+        let opacity = self.brush_opacity;
+        let sel_arg = if self.selection.has_selection {
+            Some(&self.selection)
+        } else {
+            None
+        };
+
+        if let Some(rect) = dziwak_core::brush::clone_dab(
+            layer,
+            source_layer,
+            cx,
+            cy,
+            offset.0,
+            offset.1,
+            radius,
+            hardness,
+            opacity,
+            sel_arg,
+        ) {
+            self.mark_rect_dirty(rect);
+            self.bump_layer_version(layer_idx);
+        }
+    }
+
+    /// Kończy pociągnięcie klonowania i zwalnia sklonowaną warstwę źródłową (T8).
+    pub fn finish_clone_stroke(&mut self) {
+        self.is_painting = false;
+        self.last_stroke_pos = None;
+        self.clone_source_layer = None;
+    }
+
+    /// Nanosi pojedynczy ślad rozmazywania (Shift+S, T9).
+    pub fn apply_smudge_dab(&mut self, cx: f32, cy: f32, prev_x: f32, prev_y: f32) {
+        if self.document.layers.is_empty() {
+            return;
+        }
+        let dx = (prev_x - cx).round() as i32;
+        let dy = (prev_y - cy).round() as i32;
+        if dx == 0 && dy == 0 {
+            return;
+        }
+
+        let layer_idx = self.active_layer_index.min(self.document.layers.len() - 1);
+        let source = self.document.layers[layer_idx].pixels.clone();
+        let radius = (self.brush_size * 0.5).max(0.5);
+        let hardness = self.brush_hardness;
+        let opacity = self.smudge_rate;
+        let sel_arg = if self.selection.has_selection {
+            Some(&self.selection)
+        } else {
+            None
+        };
+
+        let layer = &mut self.document.layers[layer_idx];
+        if let Some(rect) = dziwak_core::clone_dab(
+            layer, &source, cx, cy, dx, dy, radius, hardness, opacity, sel_arg,
+        ) {
+            self.mark_rect_dirty(rect);
+            self.bump_layer_version(layer_idx);
+        }
+    }
+
+    /// Nanosi ślad rozjaśniania lub ściemniania (Shift+D, T9). Ctrl odwraca tryb.
+    pub fn apply_dodge_burn_dab(&mut self, cx: f32, cy: f32, invert_mode: bool) {
+        if self.document.layers.is_empty() {
+            return;
+        }
+        let base_amount = match self.dodge_burn_type {
+            DodgeBurnType::Dodge => self.dodge_burn_exposure,
+            DodgeBurnType::Burn => -self.dodge_burn_exposure,
+        };
+        let amount = if invert_mode {
+            -base_amount
+        } else {
+            base_amount
+        };
+
+        let layer_idx = self.active_layer_index.min(self.document.layers.len() - 1);
+        let radius = (self.brush_size * 0.5).max(0.5);
+        let hardness = self.brush_hardness;
+        let sel_arg = if self.selection.has_selection {
+            Some(&self.selection)
+        } else {
+            None
+        };
+
+        let layer = &mut self.document.layers[layer_idx];
+        if let Some(rect) =
+            dziwak_core::dodge_burn_dab(layer, cx, cy, radius, hardness, amount, sel_arg)
+        {
+            self.mark_rect_dirty(rect);
+            self.bump_layer_version(layer_idx);
+        }
+    }
+
+    /// Nanosi ślad rozmywania lub wyostrzania (Shift+U, T9). Ctrl odwraca tryb.
+    pub fn apply_blur_sharpen_dab(&mut self, cx: f32, cy: f32, invert_mode: bool) {
+        if self.document.layers.is_empty() {
+            return;
+        }
+        let base_amount = match self.blur_sharpen_type {
+            BlurSharpenType::Blur => self.blur_sharpen_rate,
+            BlurSharpenType::Sharpen => -self.blur_sharpen_rate,
+        };
+        let amount = if invert_mode {
+            -base_amount
+        } else {
+            base_amount
+        };
+
+        let layer_idx = self.active_layer_index.min(self.document.layers.len() - 1);
+        let radius = (self.brush_size * 0.5).max(0.5);
+        let hardness = self.brush_hardness;
+        let sel_arg = if self.selection.has_selection {
+            Some(&self.selection)
+        } else {
+            None
+        };
+
+        let layer = &mut self.document.layers[layer_idx];
+        if let Some(rect) =
+            dziwak_core::blur_sharpen_dab(layer, cx, cy, radius, hardness, amount, sel_arg)
+        {
             self.mark_rect_dirty(rect);
             self.bump_layer_version(layer_idx);
         }
@@ -1029,6 +1478,64 @@ impl DziwakApp {
         self.selection.combine_mask(&mask, mode);
     }
 
+    /// Zaznacza wszystkie piksele w całym obrazie o kolorze zbliżonym do wskazanego (T4).
+    pub fn apply_select_by_color(
+        &mut self,
+        cx: f32,
+        cy: f32,
+        mode: dziwak_core::selection::SelectMode,
+    ) {
+        if self.document.layers.is_empty() {
+            return;
+        }
+        if cx < 0.0 || cy < 0.0 {
+            return;
+        }
+        let px = cx.floor() as u32;
+        let py = cy.floor() as u32;
+        if px >= self.document.width || py >= self.document.height {
+            return;
+        }
+
+        let w = self.document.width as usize;
+        let h = self.document.height as usize;
+        let len = w * h;
+        if len == 0 {
+            return;
+        }
+
+        if self.composite_buffer.len() != len {
+            self.composite_buffer.resize(len, Rgba8::TRANSPARENT);
+        }
+
+        let layer_idx = self.active_layer_index.min(self.document.layers.len() - 1);
+
+        if self.fill_sample_all_layers {
+            let _ = self.document.compose_rect(
+                Rect::new(0, 0, self.document.width, self.document.height),
+                &mut self.composite_buffer,
+            );
+        } else {
+            Self::sample_layer_to_buffer(
+                &self.document.layers[layer_idx],
+                w,
+                h,
+                &mut self.composite_buffer,
+            );
+        }
+
+        let target_color = self.composite_buffer[py as usize * w + px as usize];
+        let mask = dziwak_core::fill::color_select_mask(
+            &self.composite_buffer,
+            w,
+            h,
+            target_color,
+            self.fill_tolerance,
+        );
+
+        self.selection.combine_mask(&mask, mode);
+    }
+
     /// Wypełnia spójny obszar kolorem pędzla (narzędzie Kubełek).
     pub fn apply_bucket_fill(&mut self, cx: f32, cy: f32) {
         if self.document.layers.is_empty() {
@@ -1166,6 +1673,264 @@ impl DziwakApp {
         }
     }
 
+    /// Rozpoczyna operację przesuwania aktywnej warstwy lub zawartości zaznaczenia (narzędzie Move, M).
+    pub fn start_move(&mut self, canvas_pos: egui::Pos2) {
+        if self.document.layers.is_empty() {
+            return;
+        }
+        let layer_idx = self.active_layer_index.min(self.document.layers.len() - 1);
+        self.push_history();
+        self.is_moving = true;
+        self.move_drag_start = Some(canvas_pos);
+        self.move_initial_layer = Some(self.document.layers[layer_idx].clone());
+        if self.selection.has_selection && self.selection.bounds().is_some() {
+            self.move_initial_selection = Some(self.selection.clone());
+        } else {
+            self.move_initial_selection = None;
+        }
+    }
+
+    /// Przemieszcza aktywną warstwę (lub zawartość zaznaczenia) o zadane przesunięcie w pikselach (dx, dy).
+    pub fn apply_move_offset(&mut self, dx: i32, dy: i32) {
+        let Some(init_layer) = self.move_initial_layer.as_ref() else {
+            return;
+        };
+        if self.document.layers.is_empty() {
+            return;
+        }
+        let layer_idx = self.active_layer_index.min(self.document.layers.len() - 1);
+        let w = self.document.width;
+        let h = self.document.height;
+
+        let mut new_layer_pixels = TiledLayer::new(w, h);
+        let across = init_layer.pixels.tiles_across();
+
+        if let Some(init_sel) = self.move_initial_selection.as_ref() {
+            // 1. Kopiujemy piksele nieobjęte zaznaczeniem (pozostają w pierwotnym miejscu)
+            for (tile_idx, tile_opt) in init_layer.pixels.tiles.iter().enumerate() {
+                if let Some(tile) = tile_opt {
+                    let tx = (tile_idx as u32) % across;
+                    let ty = (tile_idx as u32) / across;
+                    let base_x = tx * (TILE_SIZE as u32);
+                    let base_y = ty * (TILE_SIZE as u32);
+                    for ly in 0..TILE_SIZE {
+                        for lx in 0..TILE_SIZE {
+                            let px = tile[ly * TILE_SIZE + lx];
+                            if !px.is_transparent() {
+                                let sx = base_x + lx as u32;
+                                let sy = base_y + ly as u32;
+                                if init_sel.coverage(sx, sy) == 0 {
+                                    let _ = new_layer_pixels.set_pixel(sx, sy, px);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 2. Kopiujemy piksele objęte zaznaczeniem z przesunięciem (dx, dy)
+            for (tile_idx, tile_opt) in init_layer.pixels.tiles.iter().enumerate() {
+                if let Some(tile) = tile_opt {
+                    let tx = (tile_idx as u32) % across;
+                    let ty = (tile_idx as u32) / across;
+                    let base_x = tx * (TILE_SIZE as u32);
+                    let base_y = ty * (TILE_SIZE as u32);
+                    for ly in 0..TILE_SIZE {
+                        for lx in 0..TILE_SIZE {
+                            let px = tile[ly * TILE_SIZE + lx];
+                            if !px.is_transparent() {
+                                let sx = base_x + lx as u32;
+                                let sy = base_y + ly as u32;
+                                if init_sel.coverage(sx, sy) > 0 {
+                                    let nx = sx as i32 + dx;
+                                    let ny = sy as i32 + dy;
+                                    if nx >= 0 && nx < w as i32 && ny >= 0 && ny < h as i32 {
+                                        let _ =
+                                            new_layer_pixels.set_pixel(nx as u32, ny as u32, px);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 3. Przesuwamy maskę zaznaczenia o (dx, dy)
+            if let Some(bounds) = init_sel.bounds() {
+                let mask_w = w as usize;
+                let mask_h = h as usize;
+                let mut mask = vec![0u8; mask_w * mask_h];
+                for y in bounds.y..(bounds.y + bounds.height) {
+                    for x in bounds.x..(bounds.x + bounds.width) {
+                        let cov = init_sel.coverage(x, y);
+                        if cov > 0 {
+                            let nx = x as i32 + dx;
+                            let ny = y as i32 + dy;
+                            if nx >= 0 && nx < w as i32 && ny >= 0 && ny < h as i32 {
+                                mask[ny as usize * mask_w + nx as usize] = cov;
+                            }
+                        }
+                    }
+                }
+                let mut new_sel = Selection::new(w, h);
+                new_sel.combine_mask(&mask, dziwak_core::selection::SelectMode::Replace);
+                self.selection = new_sel;
+            }
+        } else {
+            // Przemieszczanie całej aktywnej warstwy
+            for (tile_idx, tile_opt) in init_layer.pixels.tiles.iter().enumerate() {
+                if let Some(tile) = tile_opt {
+                    let tx = (tile_idx as u32) % across;
+                    let ty = (tile_idx as u32) / across;
+                    let base_x = tx * (TILE_SIZE as u32);
+                    let base_y = ty * (TILE_SIZE as u32);
+                    for ly in 0..TILE_SIZE {
+                        for lx in 0..TILE_SIZE {
+                            let px = tile[ly * TILE_SIZE + lx];
+                            if !px.is_transparent() {
+                                let sx = base_x + lx as u32;
+                                let sy = base_y + ly as u32;
+                                let nx = sx as i32 + dx;
+                                let ny = sy as i32 + dy;
+                                if nx >= 0 && nx < w as i32 && ny >= 0 && ny < h as i32 {
+                                    let _ = new_layer_pixels.set_pixel(nx as u32, ny as u32, px);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        self.document.layers[layer_idx].pixels = new_layer_pixels;
+        self.tile_renderer.mark_all_dirty();
+        self.bump_layer_version(layer_idx);
+    }
+
+    /// Kończy operację przesuwania aktywnej warstwy lub zaznaczenia.
+    pub fn finish_move(&mut self) {
+        if self.is_moving {
+            self.is_moving = false;
+            self.move_drag_start = None;
+            self.move_initial_layer = None;
+            self.move_initial_selection = None;
+            self.is_modified = true;
+        }
+    }
+
+    /// Przycina dokument (wszystkie warstwy) do podanego prostokąta `rect` i rejestruje operację w historii (T2).
+    pub fn crop_document(&mut self, rect: Rect) {
+        if rect.width == 0 || rect.height == 0 {
+            self.cancel_crop();
+            return;
+        }
+        if rect.x == 0
+            && rect.y == 0
+            && rect.width == self.document.width
+            && rect.height == self.document.height
+        {
+            self.cancel_crop();
+            return;
+        }
+        self.push_history();
+        self.document.crop(rect);
+        self.cancel_crop();
+        self.on_document_changed();
+    }
+
+    /// Zatwierdza bieżącą ramkę kadrowania (z `crop_rect` lub aktywnego przeciągania).
+    pub fn commit_crop(&mut self) -> bool {
+        let rect = if let (Some(start), Some(curr)) = (self.crop_drag_start, self.crop_drag_current)
+        {
+            let min_x = start.x.min(curr.x).max(0.0);
+            let min_y = start.y.min(curr.y).max(0.0);
+            let max_x = start.x.max(curr.x).min(self.document.width as f32);
+            let max_y = start.y.max(curr.y).min(self.document.height as f32);
+            let w = (max_x - min_x).max(0.0);
+            let h = (max_y - min_y).max(0.0);
+            if w >= 1.0 && h >= 1.0 {
+                Some(Rect::new(
+                    min_x.floor() as u32,
+                    min_y.floor() as u32,
+                    w.ceil() as u32,
+                    h.ceil() as u32,
+                ))
+            } else {
+                None
+            }
+        } else {
+            self.crop_rect
+        };
+
+        if let Some(r) = rect {
+            if r.width > 0 && r.height > 0 {
+                self.crop_document(r);
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Anuluje aktywną ramkę kadrowania.
+    pub fn cancel_crop(&mut self) {
+        self.crop_rect = None;
+        self.crop_drag_start = None;
+        self.crop_drag_current = None;
+    }
+
+    /// Przycina dokument do ramki otaczającej aktywnego zaznaczenia (Obraz -> Przytnij do zaznaczenia).
+    pub fn crop_to_selection(&mut self) -> bool {
+        if !self.selection.has_selection {
+            return false;
+        }
+        if let Some(bounds) = self.selection.bounds() {
+            if bounds.width > 0 && bounds.height > 0 {
+                self.crop_document(bounds);
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Dodaje punkt do aktywnego zaznaczenia odręcznego (T3).
+    pub fn add_free_select_point(
+        &mut self,
+        pt: (f32, f32),
+        mode: dziwak_core::selection::SelectMode,
+    ) {
+        if self.free_select_points.is_empty() {
+            self.free_select_mode = mode;
+            self.is_free_selecting = true;
+        }
+        self.free_select_points.push(pt);
+    }
+
+    /// Kończy i zatwierdza zaznaczenie odręczne, generując wygładzoną maskę wielokąta (T3).
+    pub fn finish_free_select(&mut self) -> bool {
+        if self.free_select_points.len() < 3 {
+            self.cancel_free_select();
+            return false;
+        }
+
+        let w = self.document.width as usize;
+        let h = self.document.height as usize;
+        if w == 0 || h == 0 {
+            self.cancel_free_select();
+            return false;
+        }
+
+        let mask = dziwak_core::polygon::polygon_mask(&self.free_select_points, w, h);
+        self.selection.combine_mask(&mask, self.free_select_mode);
+        self.cancel_free_select();
+        true
+    }
+
+    /// Anuluje bieżące zaznaczenie odręczne.
+    pub fn cancel_free_select(&mut self) {
+        self.free_select_points.clear();
+        self.is_free_selecting = false;
+    }
+
     /// Otwiera okno dialogowe filtra i inicjuje podgląd na aktywnej warstwie.
     pub fn open_filter_dialog(&mut self, kind: FilterKind) {
         if self.document.layers.is_empty() {
@@ -1285,9 +2050,192 @@ impl DziwakApp {
         self.document.layers[dialog.target_layer_idx] = filtered_layer;
     }
 
+    /// Przełącza aktywne narzędzie i w razie potrzeby otwiera odpowiednie okno dialogowe (np. transformacji).
+    pub fn set_active_tool(&mut self, target_tool: ActiveTool) {
+        self.active_tool = target_tool;
+        match target_tool {
+            ActiveTool::Rotate => {
+                self.open_transform_dialog(LayerTransformKind::Rotate { angle_deg: 0.0 });
+            }
+            ActiveTool::Scale => {
+                let (w, h) = (self.document.width, self.document.height);
+                self.open_transform_dialog(LayerTransformKind::Scale {
+                    width: w,
+                    height: h,
+                    orig_width: w,
+                    orig_height: h,
+                    keep_aspect: true,
+                });
+            }
+            ActiveTool::Flip => {
+                self.open_transform_dialog(LayerTransformKind::Flip { horizontal: true });
+            }
+            ActiveTool::Text if self.text_dialog.is_none() => {
+                let (x, y) = if let Some(pos) = self.cursor_canvas_pos {
+                    (pos.x.round() as i32, pos.y.round() as i32)
+                } else {
+                    (50, 50)
+                };
+                self.open_text_dialog(x, y);
+            }
+            _ => {}
+        }
+    }
+
+    /// Otwiera okno dialogowe wstawiania tekstu w zadanym punkcie płótna (T10).
+    pub fn open_text_dialog(&mut self, x: i32, y: i32) {
+        let mut dialog = TextDialog {
+            text: "Dziwak".to_string(),
+            font_family: "Noto Sans".to_string(),
+            font_size: 40.0,
+            pos: (x, y),
+            color: self.brush_color,
+            preview_mask: None,
+            error: None,
+        };
+        Self::render_text_mask_for_dialog(&mut dialog);
+        self.text_dialog = Some(dialog);
+    }
+
+    /// Pomocnicza funkcja rasteryzująca tekst dla okna dialogowego.
+    pub fn render_text_mask_for_dialog(dialog: &mut TextDialog) {
+        if dialog.text.trim().is_empty() {
+            dialog.preview_mask = None;
+            dialog.error = None;
+            return;
+        }
+        let Some(path) = find_font_path(&dialog.font_family) else {
+            dialog.preview_mask = None;
+            dialog.error = Some(format!("Nie znaleziono czcionki: {}", dialog.font_family));
+            return;
+        };
+        let Ok(data) = std::fs::read(&path) else {
+            dialog.preview_mask = None;
+            dialog.error = Some(format!("Błąd odczytu pliku: {}", path.display()));
+            return;
+        };
+        if let Some(mask) = dziwak_core::rasterize_text(&data, &dialog.text, dialog.font_size) {
+            dialog.preview_mask = Some(mask);
+            dialog.error = None;
+        } else {
+            dialog.preview_mask = None;
+            dialog.error = Some("Błąd rasteryzacji tekstu".to_string());
+        }
+    }
+
+    /// Zatwierdza tekst z okna dialogowego, tworząc NOWĄ warstwę 'Tekst' i nanosząc maskę (T10).
+    pub fn commit_text(&mut self) {
+        let Some(dialog) = self.text_dialog.take() else {
+            return;
+        };
+        let Some(mask) = dialog.preview_mask else {
+            return;
+        };
+
+        self.push_history();
+
+        let mut layer = Layer::new("Tekst", self.document.width, self.document.height);
+        let color = Rgba8::from_straight(
+            dialog.color.r(),
+            dialog.color.g(),
+            dialog.color.b(),
+            dialog.color.a(),
+        );
+
+        dziwak_core::stamp_mask(&mut layer, &mask, dialog.pos.0, dialog.pos.1, color);
+
+        self.document.add_layer(layer);
+        self.active_layer_index = self.document.layer_count().saturating_sub(1);
+        self.bump_layer_version(self.active_layer_index);
+        self.tile_renderer.mark_all_dirty();
+    }
+
+    /// Anuluje wstawianie tekstu i zamyka okno dialogowe (T10).
+    pub fn cancel_text(&mut self) {
+        self.text_dialog = None;
+    }
+
+    /// Otwiera okno dialogowe przekształcenia aktywnej warstwy (T6) i inicjuje podgląd.
+    pub fn open_transform_dialog(&mut self, kind: LayerTransformKind) {
+        if self.document.layers.is_empty() {
+            return;
+        }
+        self.cancel_filter_dialog();
+        self.cancel_transform_dialog();
+
+        let target_layer_idx = self.active_layer_index.min(self.document.layers.len() - 1);
+        let original_layer = self.document.layers[target_layer_idx].clone();
+
+        self.transform_dialog = Some(TransformDialog {
+            kind,
+            preview: true,
+            original_layer,
+            target_layer_idx,
+            last_apply_time: None,
+            pending_apply: false,
+        });
+
+        self.apply_transform_preview();
+        if let Some(dialog) = &mut self.transform_dialog {
+            dialog.last_apply_time = Some(Instant::now());
+        }
+    }
+
+    /// Stosuje podgląd przekształcenia na docelowej warstwie.
+    pub fn apply_transform_preview(&mut self) {
+        let Some(dialog) = self.transform_dialog.as_ref() else {
+            return;
+        };
+        if dialog.target_layer_idx >= self.document.layers.len() {
+            return;
+        }
+
+        if dialog.preview {
+            let new_pixels = dialog.kind.apply(&dialog.original_layer.pixels);
+            self.document.layers[dialog.target_layer_idx].pixels = new_pixels;
+        } else {
+            self.document.layers[dialog.target_layer_idx].pixels =
+                dialog.original_layer.pixels.clone();
+        }
+
+        self.tile_renderer.mark_all_dirty();
+        self.bump_layer_version(dialog.target_layer_idx);
+    }
+
+    /// Anuluje działanie okna transformacji: przywraca stan warstwy i zamyka dialog.
+    pub fn cancel_transform_dialog(&mut self) {
+        if let Some(dialog) = self.transform_dialog.take() {
+            if dialog.target_layer_idx < self.document.layers.len() {
+                self.document.layers[dialog.target_layer_idx] = dialog.original_layer;
+                self.tile_renderer.mark_all_dirty();
+                self.bump_layer_version(dialog.target_layer_idx);
+            }
+        }
+    }
+
+    /// Zatwierdza przekształcenie warstwy: zapisuje stan w historii i zamyka okno dialogowe.
+    pub fn apply_transform_dialog(&mut self) {
+        let Some(dialog) = self.transform_dialog.take() else {
+            return;
+        };
+        if dialog.target_layer_idx >= self.document.layers.len() {
+            return;
+        }
+
+        let new_pixels = dialog.kind.apply(&dialog.original_layer.pixels);
+        self.document.layers[dialog.target_layer_idx] = dialog.original_layer;
+        self.push_history();
+        self.document.layers[dialog.target_layer_idx].pixels = new_pixels;
+        self.tile_renderer.mark_all_dirty();
+        self.bump_layer_version(dialog.target_layer_idx);
+    }
+
     /// Aktualizuje renderer kafli po zmianie dokumentu i oznacza wszystkie kafle jako brudne.
     pub fn on_document_changed(&mut self) {
         self.cancel_filter_dialog();
+        self.cancel_transform_dialog();
+        self.cancel_scale_image_dialog();
+        self.cancel_canvas_size_dialog();
         if self.document.layer_count() > 0 {
             self.active_layer_index = self.active_layer_index.min(self.document.layer_count() - 1);
         } else {
@@ -1306,6 +2254,14 @@ impl DziwakApp {
         self.selection_drag_current = None;
         self.gradient_drag_start = None;
         self.gradient_drag_current = None;
+        self.crop_rect = None;
+        self.crop_drag_start = None;
+        self.crop_drag_current = None;
+        self.free_select_points.clear();
+        self.is_free_selecting = false;
+        self.layer_thumbnails.clear();
+        self.layer_versions.clear();
+        self.ensure_layer_caches();
         self.composite_buffer.clear();
         let expected_across = if w == 0 {
             0
@@ -1323,6 +2279,96 @@ impl DziwakApp {
             self.tile_renderer = TileRenderer::new(w, h);
         }
         self.tile_renderer.mark_all_dirty();
+    }
+
+    /// Otwiera okno dialogowe "Skaluj obraz..." (T7).
+    pub fn open_scale_image_dialog(&mut self) {
+        let (w, h) = (self.document.width, self.document.height);
+        self.scale_image_dialog = Some(ScaleImageDialog {
+            width: w,
+            height: h,
+            orig_width: w,
+            orig_height: h,
+            keep_aspect: true,
+        });
+    }
+
+    /// Anuluje / zamyka okno dialogowe "Skaluj obraz...".
+    pub fn cancel_scale_image_dialog(&mut self) {
+        self.scale_image_dialog = None;
+    }
+
+    /// Otwiera okno dialogowe "Rozmiar płótna..." (T7).
+    pub fn open_canvas_size_dialog(&mut self) {
+        let (w, h) = (self.document.width, self.document.height);
+        self.canvas_size_dialog = Some(CanvasSizeDialog {
+            width: w,
+            height: h,
+            orig_width: w,
+            orig_height: h,
+            offset_x: 0,
+            offset_y: 0,
+        });
+    }
+
+    /// Anuluje / zamyka okno dialogowe "Rozmiar płótna...".
+    pub fn cancel_canvas_size_dialog(&mut self) {
+        self.canvas_size_dialog = None;
+    }
+
+    /// Skaluje cały dokument (wszystkie warstwy) do wymiarów (new_w, new_h) (T7).
+    pub fn scale_image(&mut self, new_w: u32, new_h: u32) {
+        if new_w == 0 || new_h == 0 {
+            return;
+        }
+        self.push_history();
+        self.document.scale(new_w, new_h);
+        self.on_document_changed();
+    }
+
+    /// Zmienia rozmiar płótna dla wszystkich warstw z przesunięciem (off_x, off_y) (T7).
+    pub fn resize_canvas(&mut self, new_w: u32, new_h: u32, off_x: i32, off_y: i32) {
+        if new_w == 0 || new_h == 0 {
+            return;
+        }
+        self.push_history();
+        self.document.resize_canvas(new_w, new_h, off_x, off_y);
+        self.on_document_changed();
+    }
+
+    /// Obraca cały dokument o 90 stopni zgodnie z ruchem wskazówek zegara (T7).
+    pub fn rotate_image_90_cw(&mut self) {
+        self.push_history();
+        self.document.rotate90_cw();
+        self.on_document_changed();
+    }
+
+    /// Obraca cały dokument o 90 stopni przeciwnie do ruchu wskazówek zegara (T7).
+    pub fn rotate_image_90_ccw(&mut self) {
+        self.push_history();
+        self.document.rotate90_ccw();
+        self.on_document_changed();
+    }
+
+    /// Obraca cały dokument o 180 stopni (T7).
+    pub fn rotate_image_180(&mut self) {
+        self.push_history();
+        self.document.rotate180();
+        self.on_document_changed();
+    }
+
+    /// Odbija cały dokument w poziomie (T7).
+    pub fn flip_image_horizontal(&mut self) {
+        self.push_history();
+        self.document.flip_horizontal();
+        self.on_document_changed();
+    }
+
+    /// Odbija cały dokument w pionie (T7).
+    pub fn flip_image_vertical(&mut self) {
+        self.push_history();
+        self.document.flip_vertical();
+        self.on_document_changed();
     }
 
     /// Dodaje nową pustą warstwę powyżej aktywnej i zaznacza ją.
@@ -1471,6 +2517,37 @@ impl DziwakApp {
 
         self.transform.zoom = zoom;
         self.center_canvas(viewport_rect);
+    }
+
+    /// Wykonuje powiększenie do wskazanego prostokąta płótna (T11).
+    pub fn zoom_to_canvas_rect(&mut self, rect: egui::Rect, viewport_rect: egui::Rect) {
+        if rect.width() <= 0.0
+            || rect.height() <= 0.0
+            || viewport_rect.width() <= 0.0
+            || viewport_rect.height() <= 0.0
+        {
+            return;
+        }
+        let scale_x = viewport_rect.width() / rect.width();
+        let scale_y = viewport_rect.height() / rect.height();
+        let new_zoom = scale_x.min(scale_y).clamp(0.05_f32, 64.0_f32);
+        let c_center = rect.center();
+        let vp_center = viewport_rect.center();
+        self.transform.pan = vp_center.to_vec2() - c_center.to_vec2() * new_zoom;
+        self.transform.zoom = new_zoom;
+        self.tile_renderer.set_zoom(new_zoom);
+        self.auto_fit = false;
+    }
+
+    /// Oblicza parametry pomiaru (odległość, kąt w stopniach, dx, dy) jeśli miarka jest zdefiniowana (T11).
+    pub fn measure_stats(&self) -> Option<(f32, f32, f32, f32)> {
+        let start = self.measure_start?;
+        let end = self.measure_end?;
+        let dx = end.x - start.x;
+        let dy = end.y - start.y;
+        let len = dx.hypot(dy);
+        let angle = (-dy).atan2(dx).to_degrees();
+        Some((len, angle, dx, dy))
     }
 
     /// Uruchamia asynchroniczny dialog wyboru pliku do otwarcia w osobnym wątku (nie blokuje GUI).
@@ -1785,6 +2862,43 @@ mod tests {
         app.apply_tool_dab(10.0, 10.0);
         let p = app.document.layers[active_layer].get_pixel(10, 10).unwrap();
         assert_eq!(p, Rgba8::TRANSPARENT);
+    }
+
+    #[test]
+    fn test_pencil_tool_dab_hard_edge() {
+        let mut app = DziwakApp::new();
+        app.active_tool = ActiveTool::Pencil;
+        app.brush_size = 20.0; // radius = 10.0
+        app.brush_hardness = 0.0; // Pencil ignores hardness and uses 1.0 (hard edge)
+        app.brush_opacity = 1.0;
+        app.brush_color = egui::Color32::BLUE;
+
+        // Ślad w (32, 32)
+        app.apply_tool_dab(32.0, 32.0);
+
+        let active_layer = app.active_layer_index;
+        // Piksel w odległości 8 px od środka (wewnątrz radius 10) musi mieć pełne krycie 255
+        let p = app.document.layers[active_layer].get_pixel(40, 32).unwrap();
+        assert_eq!(p.b(), 255);
+        assert_eq!(p.a(), 255);
+    }
+
+    #[test]
+    fn test_airbrush_tool_dab() {
+        let mut app = DziwakApp::new();
+        app.active_tool = ActiveTool::Airbrush;
+        app.brush_size = 16.0;
+        app.brush_hardness = 0.5;
+        app.brush_opacity = 1.0;
+        app.brush_color = egui::Color32::GREEN;
+
+        app.tile_renderer.dirty_tiles.clear();
+        app.apply_tool_dab(32.0, 32.0);
+
+        assert!(!app.tile_renderer.dirty_tiles.is_empty());
+        let active_layer = app.active_layer_index;
+        let p = app.document.layers[active_layer].get_pixel(32, 32).unwrap();
+        assert_eq!(p.g(), 255);
     }
 
     #[test]
@@ -2468,5 +3582,656 @@ mod tests {
         assert_eq!(app.error_message, None);
         assert!(app.ai_rx.is_none());
         println!("AI end-to-end: {:?}", start.elapsed());
+    }
+
+    #[test]
+    fn test_move_tool_whole_layer() {
+        let mut app = DziwakApp::new();
+        let target_layer = app.active_layer_index;
+        app.document.layers[target_layer].pixels.clear();
+
+        let red = Rgba8::new(255, 0, 0, 255);
+        app.document.layers[target_layer]
+            .set_pixel(10, 10, red)
+            .unwrap();
+
+        app.active_tool = ActiveTool::Move;
+        app.start_move(egui::pos2(10.0, 10.0));
+        assert!(app.is_moving);
+
+        // Przesunięcie o (5, 7)
+        app.apply_move_offset(5, 7);
+        assert_eq!(
+            app.document.layers[target_layer].get_pixel(10, 10),
+            Some(Rgba8::TRANSPARENT)
+        );
+        assert_eq!(
+            app.document.layers[target_layer].get_pixel(15, 17),
+            Some(red)
+        );
+
+        app.finish_move();
+        assert!(!app.is_moving);
+        assert!(app.is_modified);
+
+        // Test cofania (Undo) - powrót do pierwotnej pozycji
+        assert!(app.history.can_undo());
+        let _ = app.handle_undo();
+        assert_eq!(
+            app.document.layers[target_layer].get_pixel(10, 10),
+            Some(red)
+        );
+        assert_eq!(
+            app.document.layers[target_layer].get_pixel(15, 17),
+            Some(Rgba8::TRANSPARENT)
+        );
+
+        // Test ponawiania (Redo)
+        assert!(app.history.can_redo());
+        let _ = app.handle_redo();
+        assert_eq!(
+            app.document.layers[target_layer].get_pixel(15, 17),
+            Some(red)
+        );
+    }
+
+    #[test]
+    fn test_move_tool_selection_content() {
+        let mut app = DziwakApp::new();
+        let target_layer = app.active_layer_index;
+        app.document.layers[target_layer].pixels.clear();
+
+        let red = Rgba8::new(255, 0, 0, 255);
+        let green = Rgba8::new(0, 255, 0, 255);
+        app.document.layers[target_layer]
+            .set_pixel(10, 10, red)
+            .unwrap();
+        app.document.layers[target_layer]
+            .set_pixel(20, 20, green)
+            .unwrap();
+
+        // Zaznaczamy prostokąt obejmujący piksel (10, 10), ale nie (20, 20)
+        app.selection.select_rect(8, 8, 5, 5);
+        assert!(app.selection.has_selection);
+        assert_eq!(app.selection.coverage(10, 10), 255);
+        assert_eq!(app.selection.coverage(20, 20), 0);
+
+        app.active_tool = ActiveTool::Move;
+        app.start_move(egui::pos2(10.0, 10.0));
+        app.apply_move_offset(5, 5);
+
+        // Niezaznaczony zielony piksel pozostał na miejscu
+        assert_eq!(
+            app.document.layers[target_layer].get_pixel(20, 20),
+            Some(green)
+        );
+        // Zaznaczony czerwony piksel przesunął się z (10, 10) na (15, 15)
+        assert_eq!(
+            app.document.layers[target_layer].get_pixel(10, 10),
+            Some(Rgba8::TRANSPARENT)
+        );
+        assert_eq!(
+            app.document.layers[target_layer].get_pixel(15, 15),
+            Some(red)
+        );
+
+        // Maska zaznaczenia również przesunęła się o (5, 5)
+        assert_eq!(app.selection.coverage(15, 15), 255);
+        assert_eq!(app.selection.coverage(10, 10), 0);
+
+        app.finish_move();
+
+        // Undo cofa zawartość warstwy do stanu sprzed przesuwania
+        assert!(app.history.can_undo());
+        let _ = app.handle_undo();
+        assert_eq!(
+            app.document.layers[target_layer].get_pixel(10, 10),
+            Some(red)
+        );
+        assert_eq!(
+            app.document.layers[target_layer].get_pixel(15, 15),
+            Some(Rgba8::TRANSPARENT)
+        );
+    }
+
+    #[test]
+    fn test_crop_document_multilayers_and_undo() {
+        let mut app = DziwakApp::new();
+        assert_eq!(app.document.width, 800);
+        assert_eq!(app.document.height, 600);
+
+        let red = Rgba8::new(255, 0, 0, 255);
+        let green = Rgba8::new(0, 255, 0, 255);
+        app.document.layers[0].set_pixel(100, 100, red).unwrap();
+        if app.document.layer_count() > 1 {
+            app.document.layers[1].set_pixel(150, 120, green).unwrap();
+        }
+
+        // Przycinamy dokument do prostokąta (50, 50, 200, 150)
+        let crop_rect = Rect::new(50, 50, 200, 150);
+        app.crop_document(crop_rect);
+
+        assert_eq!(app.document.width, 200);
+        assert_eq!(app.document.height, 150);
+        assert_eq!(app.tile_renderer.tiles_across, (200 - 1) / 64 + 1);
+        assert_eq!(app.tile_renderer.tiles_down, (150 - 1) / 64 + 1);
+
+        // Piksel (100, 100) jest teraz na (50, 50)
+        assert_eq!(app.document.layers[0].get_pixel(50, 50), Some(red));
+        if app.document.layer_count() > 1 {
+            // Piksel (150, 120) jest teraz na (100, 70)
+            assert_eq!(app.document.layers[1].get_pixel(100, 70), Some(green));
+        }
+
+        // Cofnięcie (Undo) przywraca wymiary 800x600 i pierwotne pozycje pikseli
+        assert!(app.history.can_undo());
+        let resized = app.handle_undo();
+        assert!(resized);
+        assert_eq!(app.document.width, 800);
+        assert_eq!(app.document.height, 600);
+        assert_eq!(app.document.layers[0].get_pixel(100, 100), Some(red));
+
+        // Ponowienie (Redo) ponownie przycina
+        assert!(app.history.can_redo());
+        let resized_redo = app.handle_redo();
+        assert!(resized_redo);
+        assert_eq!(app.document.width, 200);
+        assert_eq!(app.document.height, 150);
+        assert_eq!(app.document.layers[0].get_pixel(50, 50), Some(red));
+    }
+
+    #[test]
+    fn test_crop_to_selection_and_commit_crop() {
+        let mut app = DziwakApp::new();
+        let blue = Rgba8::new(0, 0, 255, 255);
+        app.document.layers[0].set_pixel(30, 40, blue).unwrap();
+
+        // 1. Test commit_crop z przeciągania
+        app.active_tool = ActiveTool::Crop;
+        app.crop_drag_start = Some(egui::pos2(20.0, 30.0));
+        app.crop_drag_current = Some(egui::pos2(120.0, 130.0));
+        let ok = app.commit_crop();
+        assert!(ok);
+        assert_eq!(app.document.width, 100);
+        assert_eq!(app.document.height, 100);
+        assert_eq!(app.document.layers[0].get_pixel(10, 10), Some(blue));
+
+        // 2. Test crop_to_selection
+        app.selection.select_rect(5, 5, 25, 35);
+        let ok2 = app.crop_to_selection();
+        assert!(ok2);
+        assert_eq!(app.document.width, 25);
+        assert_eq!(app.document.height, 35);
+        assert_eq!(app.document.layers[0].get_pixel(5, 5), Some(blue));
+    }
+
+    #[test]
+    fn test_free_select_tool_polygon_and_modes() {
+        let mut app = DziwakApp::new();
+        assert!(!app.selection.has_selection);
+
+        app.active_tool = ActiveTool::SelectFree;
+
+        // Trójkąt o wierzchołkach (10, 10), (50, 10), (10, 50)
+        app.add_free_select_point((10.0, 10.0), dziwak_core::selection::SelectMode::Replace);
+        app.add_free_select_point((50.0, 10.0), dziwak_core::selection::SelectMode::Replace);
+        app.add_free_select_point((10.0, 50.0), dziwak_core::selection::SelectMode::Replace);
+        assert_eq!(app.free_select_points.len(), 3);
+        assert!(app.is_free_selecting);
+
+        // Zatwierdzenie zaznaczenia odręcznego
+        let ok = app.finish_free_select();
+        assert!(ok);
+        assert!(app.selection.has_selection);
+        assert!(!app.is_free_selecting);
+        assert!(app.free_select_points.is_empty());
+
+        // Punkt wewnątrz trójkąta (15, 15) powinien mieć coverage > 0
+        assert!(app.selection.coverage(15, 15) > 0);
+        // Punkt z dala na zewnątrz (100, 100) ma coverage == 0
+        assert_eq!(app.selection.coverage(100, 100), 0);
+
+        // Dodawanie kolejnego obszaru (SelectMode::Add)
+        app.add_free_select_point((100.0, 100.0), dziwak_core::selection::SelectMode::Add);
+        app.add_free_select_point((150.0, 100.0), dziwak_core::selection::SelectMode::Add);
+        app.add_free_select_point((100.0, 150.0), dziwak_core::selection::SelectMode::Add);
+        app.finish_free_select();
+
+        // Oba punkty są teraz zaznaczone
+        assert!(app.selection.coverage(15, 15) > 0);
+        assert!(app.selection.coverage(105, 105) > 0);
+
+        // Test anulowania
+        app.add_free_select_point((200.0, 200.0), dziwak_core::selection::SelectMode::Replace);
+        app.cancel_free_select();
+        assert!(app.free_select_points.is_empty());
+        assert!(!app.is_free_selecting);
+    }
+
+    #[test]
+    fn test_select_by_color_tool() {
+        let mut app = DziwakApp::new();
+        let target_layer = app.active_layer_index;
+        app.document.layers[target_layer].pixels.clear();
+
+        let yellow = Rgba8::new(255, 255, 0, 255);
+        let dark_yellow = Rgba8::new(250, 250, 5, 255);
+        let blue = Rgba8::new(0, 0, 255, 255);
+
+        // Rozłączne piksele o kolorze żółtym
+        app.document.layers[target_layer]
+            .set_pixel(10, 10, yellow)
+            .unwrap();
+        app.document.layers[target_layer]
+            .set_pixel(80, 80, dark_yellow)
+            .unwrap();
+        // Inny kolor (niebieski) pomiędzy nimi
+        app.document.layers[target_layer]
+            .set_pixel(40, 40, blue)
+            .unwrap();
+
+        app.active_tool = ActiveTool::SelectColor;
+        app.fill_tolerance = 15;
+        app.fill_sample_all_layers = false;
+
+        // Klikamy na żółty piksel (10, 10)
+        app.apply_select_by_color(10.0, 10.0, dziwak_core::selection::SelectMode::Replace);
+
+        assert!(app.selection.has_selection);
+        // Oba rozłączne żółte piksele są zaznaczone w całym dokumencie
+        assert_eq!(app.selection.coverage(10, 10), 255);
+        assert_eq!(app.selection.coverage(80, 80), 255);
+        // Niebieski piksel oraz tło nie są zaznaczone
+        assert_eq!(app.selection.coverage(40, 40), 0);
+        assert_eq!(app.selection.coverage(0, 0), 0);
+
+        // Dodanie niebieskiego piksela przez SelectMode::Add
+        app.apply_select_by_color(40.0, 40.0, dziwak_core::selection::SelectMode::Add);
+        assert_eq!(app.selection.coverage(10, 10), 255);
+        assert_eq!(app.selection.coverage(40, 40), 255);
+
+        // Odjęcie żółtego piksela przez SelectMode::Subtract
+        app.apply_select_by_color(10.0, 10.0, dziwak_core::selection::SelectMode::Subtract);
+        assert_eq!(app.selection.coverage(10, 10), 0);
+        assert_eq!(app.selection.coverage(80, 80), 0);
+        assert_eq!(app.selection.coverage(40, 40), 255);
+    }
+
+    #[test]
+    fn test_transform_dialog_rotate_apply_and_undo() {
+        let mut app = DziwakApp::new();
+        let target_layer = app.active_layer_index;
+        app.document.layers[target_layer].pixels.clear();
+
+        let red = Rgba8::new(255, 0, 0, 255);
+        app.document.layers[target_layer]
+            .set_pixel(50, 50, red)
+            .unwrap();
+
+        // Otwieramy dialog obrotu o 180 stopni
+        app.open_transform_dialog(LayerTransformKind::Rotate { angle_deg: 180.0 });
+        assert!(app.transform_dialog.is_some());
+
+        // Podgląd jest na żywo: piksel (50, 50) obrócony o 180° wokół środka (400, 300) trafia na (749, 549)
+        let p_rotated = app.document.layers[target_layer]
+            .get_pixel(749, 549)
+            .unwrap();
+        assert!(p_rotated.a() > 0);
+
+        // Zatwierdzamy
+        app.apply_transform_dialog();
+        assert!(app.transform_dialog.is_none());
+
+        // Cofnięcie przywraca pierwotny stan
+        let _ = app.handle_undo();
+        assert_eq!(
+            app.document.layers[target_layer].get_pixel(50, 50),
+            Some(red)
+        );
+    }
+
+    #[test]
+    fn test_transform_dialog_scale_and_cancel() {
+        let mut app = DziwakApp::new();
+        let target_layer = app.active_layer_index;
+        app.document.layers[target_layer].pixels.clear();
+
+        let blue = Rgba8::new(0, 0, 255, 255);
+        app.document.layers[target_layer]
+            .set_pixel(10, 10, blue)
+            .unwrap();
+
+        app.open_transform_dialog(LayerTransformKind::Scale {
+            width: 200,
+            height: 200,
+            orig_width: 100,
+            orig_height: 100,
+            keep_aspect: true,
+        });
+
+        // Anulujemy
+        app.cancel_transform_dialog();
+        assert!(app.transform_dialog.is_none());
+        assert_eq!(
+            app.document.layers[target_layer].get_pixel(10, 10),
+            Some(blue)
+        );
+    }
+
+    #[test]
+    fn test_transform_dialog_flip() {
+        let mut app = DziwakApp::new();
+        let target_layer = app.active_layer_index;
+        app.document.layers[target_layer].pixels.clear();
+
+        let green = Rgba8::new(0, 255, 0, 255);
+        let w = app.document.width;
+        app.document.layers[target_layer]
+            .set_pixel(0, 0, green)
+            .unwrap();
+
+        app.open_transform_dialog(LayerTransformKind::Flip { horizontal: true });
+        assert_eq!(
+            app.document.layers[target_layer].get_pixel(w - 1, 0),
+            Some(green)
+        );
+
+        app.apply_transform_dialog();
+        assert_eq!(
+            app.document.layers[target_layer].get_pixel(w - 1, 0),
+            Some(green)
+        );
+
+        let _ = app.handle_undo();
+        assert_eq!(
+            app.document.layers[target_layer].get_pixel(0, 0),
+            Some(green)
+        );
+    }
+
+    #[test]
+    fn test_set_active_tool_opens_transform_dialog() {
+        let mut app = DziwakApp::new();
+        assert!(app.transform_dialog.is_none());
+
+        app.set_active_tool(ActiveTool::Rotate);
+        assert_eq!(app.active_tool, ActiveTool::Rotate);
+        assert!(matches!(
+            app.transform_dialog.as_ref().map(|d| d.kind),
+            Some(LayerTransformKind::Rotate { .. })
+        ));
+
+        app.set_active_tool(ActiveTool::Scale);
+        assert_eq!(app.active_tool, ActiveTool::Scale);
+        assert!(matches!(
+            app.transform_dialog.as_ref().map(|d| d.kind),
+            Some(LayerTransformKind::Scale { .. })
+        ));
+
+        app.set_active_tool(ActiveTool::Flip);
+        assert_eq!(app.active_tool, ActiveTool::Flip);
+        assert!(matches!(
+            app.transform_dialog.as_ref().map(|d| d.kind),
+            Some(LayerTransformKind::Flip { .. })
+        ));
+    }
+
+    #[test]
+    fn test_scale_image_and_undo() {
+        let mut app = DziwakApp::new();
+        let (orig_w, orig_h) = (app.document.width, app.document.height);
+        let red = Rgba8::new(255, 0, 0, 255);
+        app.document.layers[0].set_pixel(10, 10, red).unwrap();
+
+        app.scale_image(orig_w * 2, orig_h * 2);
+        assert_eq!(app.document.width, orig_w * 2);
+        assert_eq!(app.document.height, orig_h * 2);
+        assert!(app.document.layers[0].get_pixel(20, 20).unwrap().a() > 0);
+
+        let changed_dims = app.handle_undo();
+        assert!(changed_dims);
+        assert_eq!(app.document.width, orig_w);
+        assert_eq!(app.document.height, orig_h);
+        assert_eq!(app.document.layers[0].get_pixel(10, 10), Some(red));
+
+        let changed_dims_redo = app.handle_redo();
+        assert!(changed_dims_redo);
+        assert_eq!(app.document.width, orig_w * 2);
+        assert_eq!(app.document.height, orig_h * 2);
+    }
+
+    #[test]
+    fn test_resize_canvas_and_undo() {
+        let mut app = DziwakApp::new();
+        let (orig_w, orig_h) = (app.document.width, app.document.height);
+        let red = Rgba8::new(255, 0, 0, 255);
+        app.document.layers[0].set_pixel(10, 10, red).unwrap();
+
+        app.resize_canvas(orig_w + 100, orig_h + 100, 20, 30);
+        assert_eq!(app.document.width, orig_w + 100);
+        assert_eq!(app.document.height, orig_h + 100);
+        assert_eq!(app.document.layers[0].get_pixel(30, 40), Some(red));
+
+        let changed_dims = app.handle_undo();
+        assert!(changed_dims);
+        assert_eq!(app.document.width, orig_w);
+        assert_eq!(app.document.height, orig_h);
+        assert_eq!(app.document.layers[0].get_pixel(10, 10), Some(red));
+    }
+
+    #[test]
+    fn test_rotate_image_and_undo() {
+        let mut app = DziwakApp::new();
+        let (orig_w, orig_h) = (app.document.width, app.document.height);
+        let red = Rgba8::new(255, 0, 0, 255);
+        app.document.layers[0].set_pixel(0, 0, red).unwrap();
+
+        // 90 CW: swaps width and height
+        app.rotate_image_90_cw();
+        assert_eq!(app.document.width, orig_h);
+        assert_eq!(app.document.height, orig_w);
+        assert_eq!(app.document.layers[0].get_pixel(orig_h - 1, 0), Some(red));
+
+        app.handle_undo();
+        assert_eq!(app.document.width, orig_w);
+        assert_eq!(app.document.height, orig_h);
+        assert_eq!(app.document.layers[0].get_pixel(0, 0), Some(red));
+
+        // 90 CCW: swaps width and height
+        app.rotate_image_90_ccw();
+        assert_eq!(app.document.width, orig_h);
+        assert_eq!(app.document.height, orig_w);
+
+        app.handle_undo();
+        assert_eq!(app.document.width, orig_w);
+        assert_eq!(app.document.height, orig_h);
+
+        // 180: keeps width and height
+        app.rotate_image_180();
+        assert_eq!(app.document.width, orig_w);
+        assert_eq!(app.document.height, orig_h);
+        assert_eq!(
+            app.document.layers[0].get_pixel(orig_w - 1, orig_h - 1),
+            Some(red)
+        );
+
+        app.handle_undo();
+        assert_eq!(app.document.layers[0].get_pixel(0, 0), Some(red));
+    }
+
+    #[test]
+    fn test_flip_image_and_undo() {
+        let mut app = DziwakApp::new();
+        let (orig_w, orig_h) = (app.document.width, app.document.height);
+        let red = Rgba8::new(255, 0, 0, 255);
+        app.document.layers[0].set_pixel(0, 0, red).unwrap();
+
+        app.flip_image_horizontal();
+        assert_eq!(app.document.layers[0].get_pixel(orig_w - 1, 0), Some(red));
+        app.handle_undo();
+        assert_eq!(app.document.layers[0].get_pixel(0, 0), Some(red));
+
+        app.flip_image_vertical();
+        assert_eq!(app.document.layers[0].get_pixel(0, orig_h - 1), Some(red));
+        app.handle_undo();
+        assert_eq!(app.document.layers[0].get_pixel(0, 0), Some(red));
+    }
+
+    #[test]
+    fn test_scale_and_canvas_dialog_lifecycle() {
+        let mut app = DziwakApp::new();
+        assert!(app.scale_image_dialog.is_none());
+        assert!(app.canvas_size_dialog.is_none());
+
+        app.open_scale_image_dialog();
+        assert!(app.scale_image_dialog.is_some());
+        app.cancel_scale_image_dialog();
+        assert!(app.scale_image_dialog.is_none());
+
+        app.open_canvas_size_dialog();
+        assert!(app.canvas_size_dialog.is_some());
+        app.cancel_canvas_size_dialog();
+        assert!(app.canvas_size_dialog.is_none());
+    }
+
+    #[test]
+    fn test_clone_tool_workflow() {
+        let mut app = DziwakApp::new();
+        app.active_layer_index = 0;
+        app.active_tool = ActiveTool::Clone;
+        app.brush_size = 10.0;
+        app.brush_hardness = 1.0;
+        app.brush_opacity = 1.0;
+
+        // Draw red pixel at source position (50, 50)
+        let red = Rgba8::new(255, 0, 0, 255);
+        app.document.layers[0].set_pixel(50, 50, red).unwrap();
+
+        // Set clone source to (50, 50)
+        app.set_clone_source((50.0, 50.0));
+        assert_eq!(app.clone_source, Some((50.0, 50.0)));
+        assert_eq!(app.clone_offset, None);
+
+        // Start stroke at target position (100, 100)
+        app.start_clone_stroke((100.0, 100.0));
+        assert_eq!(app.clone_offset, Some((-50, -50)));
+        assert!(app.is_painting);
+
+        // The target pixel at (100, 100) should now be red
+        assert_eq!(app.document.layers[0].get_pixel(100, 100), Some(red));
+
+        app.finish_clone_stroke();
+        assert!(!app.is_painting);
+        assert!(app.clone_source_layer.is_none());
+
+        // Undo should restore original pixel state
+        app.handle_undo();
+        assert_ne!(app.document.layers[0].get_pixel(100, 100), Some(red));
+    }
+
+    #[test]
+    fn test_t9_tools_workflow() {
+        let mut app = DziwakApp::new();
+        app.active_layer_index = 0;
+        app.brush_size = 10.0;
+        app.brush_hardness = 1.0;
+
+        let red = Rgba8::new(255, 0, 0, 255);
+        app.document.layers[0].set_pixel(20, 20, red).unwrap();
+
+        // 1. Smudge from (20, 20) to (25, 20)
+        app.smudge_rate = 1.0;
+        app.apply_smudge_dab(25.0, 20.0, 20.0, 20.0);
+        assert_eq!(app.document.layers[0].get_pixel(25, 20), Some(red));
+
+        // 2. Dodge / Burn
+        let gray = Rgba8::new(100, 100, 100, 255);
+        app.document.layers[0].set_pixel(30, 30, gray).unwrap();
+        app.dodge_burn_type = DodgeBurnType::Dodge;
+        app.dodge_burn_exposure = 0.5;
+        app.apply_dodge_burn_dab(30.0, 30.0, false);
+        let dodged = app.document.layers[0].get_pixel(30, 30).unwrap();
+        assert!(dodged.r() > 100);
+
+        // Invert Dodge with Ctrl -> Burn
+        app.apply_dodge_burn_dab(30.0, 30.0, true);
+        let burned = app.document.layers[0].get_pixel(30, 30).unwrap();
+        assert!(burned.r() < dodged.r());
+
+        // 3. Blur / Sharpen
+        let black = Rgba8::new(0, 0, 0, 255);
+        app.document.layers[0].set_pixel(40, 40, black).unwrap();
+        app.blur_sharpen_type = BlurSharpenType::Blur;
+        app.blur_sharpen_rate = 0.8;
+        app.apply_blur_sharpen_dab(40.0, 40.0, false);
+        let blurred = app.document.layers[0].get_pixel(40, 40).unwrap();
+        assert!(blurred.r() > 0);
+    }
+
+    #[test]
+    fn test_text_tool_workflow() {
+        let mut app = DziwakApp::new();
+        assert!(app.text_dialog.is_none());
+
+        app.set_active_tool(ActiveTool::Text);
+        assert!(app.text_dialog.is_some());
+
+        if let Some(dialog) = &mut app.text_dialog {
+            dialog.text = "Nowy tekst".to_string();
+            DziwakApp::render_text_mask_for_dialog(dialog);
+        }
+
+        let initial_layer_count = app.document.layer_count();
+        app.commit_text();
+
+        if app.document.layer_count() > initial_layer_count {
+            let active = app.active_layer_index;
+            assert_eq!(app.document.layers[active].name, "Tekst");
+            app.handle_undo();
+            assert_eq!(app.document.layer_count(), initial_layer_count);
+        }
+
+        app.open_text_dialog(10, 10);
+        assert!(app.text_dialog.is_some());
+        app.cancel_text();
+        assert!(app.text_dialog.is_none());
+    }
+
+    #[test]
+    fn test_zoom_and_measure_tools() {
+        let mut app = DziwakApp::new();
+
+        // 1. Narzędzie Lupa (ActiveTool::Zoom)
+        app.set_active_tool(ActiveTool::Zoom);
+        assert_eq!(app.active_tool, ActiveTool::Zoom);
+
+        let initial_zoom = app.transform.zoom;
+        // Kliknięcie / zoom around
+        app.transform
+            .zoom_around(egui::pos2(400.0, 300.0), 1.5, 0.05, 64.0);
+        assert!((app.transform.zoom - initial_zoom * 1.5).abs() < 1e-3);
+
+        // Przeciągnięcie prostokąta powiększenia
+        let target_rect =
+            egui::Rect::from_min_max(egui::pos2(100.0, 100.0), egui::pos2(300.0, 200.0));
+        let viewport_rect =
+            egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(800.0, 600.0));
+        app.zoom_to_canvas_rect(target_rect, viewport_rect);
+        assert!(app.transform.zoom >= 3.0);
+
+        // 2. Narzędzie Miarka (ActiveTool::Measure)
+        app.set_active_tool(ActiveTool::Measure);
+        assert_eq!(app.active_tool, ActiveTool::Measure);
+        assert!(app.measure_stats().is_none());
+
+        // Odcinek 30 px poziomo, 40 px pionowo -> dł. 50 px
+        app.measure_start = Some(egui::pos2(10.0, 10.0));
+        app.measure_end = Some(egui::pos2(40.0, 50.0));
+
+        let (len, angle, dx, dy) = app.measure_stats().unwrap();
+        assert!((dx - 30.0).abs() < 1e-3);
+        assert!((dy - 40.0).abs() < 1e-3);
+        assert!((len - 50.0).abs() < 1e-3);
+        assert!((angle - (-40.0_f32).atan2(30.0).to_degrees()).abs() < 1e-3);
     }
 }

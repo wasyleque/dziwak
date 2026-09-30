@@ -169,6 +169,81 @@ impl TiledLayer {
     pub fn clear(&mut self) {
         self.tiles.fill(None);
     }
+
+    /// Kopiuje wszystkie piksele warstwy do wektora o rozmiarze width * height.
+    pub fn to_vec(&self) -> Vec<Rgba8> {
+        let len = (self.width as usize) * (self.height as usize);
+        let mut buf = vec![Rgba8::TRANSPARENT; len];
+        if len == 0 {
+            return buf;
+        }
+        let tile_size = TILE_SIZE;
+        let across = self.tiles_across() as usize;
+        let down = self.tiles_down() as usize;
+
+        for ty in 0..down {
+            for tx in 0..across {
+                let tile_idx = ty * across + tx;
+                if let Some(tile) = &self.tiles[tile_idx] {
+                    let start_x = tx * tile_size;
+                    let start_y = ty * tile_size;
+                    let end_x = (start_x + tile_size).min(self.width as usize);
+                    let end_y = (start_y + tile_size).min(self.height as usize);
+                    for y in start_y..end_y {
+                        let local_y = y - start_y;
+                        let row_offset = y * (self.width as usize);
+                        let tile_row_offset = local_y * tile_size;
+                        for x in start_x..end_x {
+                            let local_x = x - start_x;
+                            buf[row_offset + x] = tile[tile_row_offset + local_x];
+                        }
+                    }
+                }
+            }
+        }
+        buf
+    }
+
+    /// Tworzy nową warstwę kafelkową z bufora ciągłego RGBA8.
+    /// Puste kafle (wszystkie piksele przezroczyste) nie są alokowane.
+    pub fn from_buffer(buf: &[Rgba8], width: u32, height: u32) -> Self {
+        let mut layer = Self::new(width, height);
+        if buf.len() != (width as usize) * (height as usize) || width == 0 || height == 0 {
+            return layer;
+        }
+        let tile_size = TILE_SIZE;
+        let across = layer.tiles_across() as usize;
+        let down = layer.tiles_down() as usize;
+
+        for ty in 0..down {
+            for tx in 0..across {
+                let tile_idx = ty * across + tx;
+                let start_x = tx * tile_size;
+                let start_y = ty * tile_size;
+                let end_x = (start_x + tile_size).min(width as usize);
+                let end_y = (start_y + tile_size).min(height as usize);
+
+                let mut tile_opt: Option<Tile> = None;
+
+                for y in start_y..end_y {
+                    let local_y = y - start_y;
+                    let row_offset = y * (width as usize);
+                    let tile_row_offset = local_y * tile_size;
+                    for x in start_x..end_x {
+                        let px = buf[row_offset + x];
+                        if !px.is_transparent() {
+                            let tile = tile_opt.get_or_insert_with(create_empty_tile);
+                            let tile_data = Arc::make_mut(tile);
+                            tile_data[tile_row_offset + (x - start_x)] = px;
+                        }
+                    }
+                }
+
+                layer.tiles[tile_idx] = tile_opt;
+            }
+        }
+        layer
+    }
 }
 
 /// Warstwa dokumentu z nazwą, widocznością, współczynnikiem krycia, trybem mieszania i siatką pikseli.
@@ -424,5 +499,29 @@ mod tests {
         let tile_orig = layer.pixels.tiles[0].as_ref().unwrap();
         let tile_dup = dup.pixels.tiles[0].as_ref().unwrap();
         assert!(Arc::ptr_eq(tile_orig, tile_dup));
+    }
+
+    #[test]
+    fn test_to_vec_and_from_buffer() {
+        let mut layer = TiledLayer::new(100, 80);
+        let red = Rgba8::new(255, 0, 0, 255);
+        let green = Rgba8::new(0, 255, 0, 255);
+        layer.set_pixel(10, 20, red).unwrap();
+        layer.set_pixel(70, 70, green).unwrap();
+
+        let vec = layer.to_vec();
+        assert_eq!(vec.len(), 100 * 80);
+        assert_eq!(vec[20 * 100 + 10], red);
+        assert_eq!(vec[70 * 100 + 70], green);
+        assert_eq!(vec[0], Rgba8::TRANSPARENT);
+
+        let restored = TiledLayer::from_buffer(&vec, 100, 80);
+        assert_eq!(restored.width, 100);
+        assert_eq!(restored.height, 80);
+        assert_eq!(restored.get_pixel(10, 20), Some(red));
+        assert_eq!(restored.get_pixel(70, 70), Some(green));
+        assert_eq!(restored.get_pixel(0, 0), Some(Rgba8::TRANSPARENT));
+        // Powinny być zaalokowane tylko kafle zawierające nietransparentne piksele (2 kafle)
+        assert_eq!(restored.count_allocated_tiles(), 2);
     }
 }

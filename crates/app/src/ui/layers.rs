@@ -78,9 +78,13 @@ pub fn render_brushes_presets(app: &mut DziwakApp, ui: &mut egui::Ui) {
                     if ui.selectable_label(is_current, label).clicked() {
                         app.brush_size = preset.size;
                         app.brush_hardness = preset.hardness;
-                        if app.active_tool != ActiveTool::Brush
-                            && app.active_tool != ActiveTool::Eraser
-                        {
+                        if !matches!(
+                            app.active_tool,
+                            ActiveTool::Brush
+                                | ActiveTool::Pencil
+                                | ActiveTool::Airbrush
+                                | ActiveTool::Eraser
+                        ) {
                             app.active_tool = ActiveTool::Brush;
                         }
                     }

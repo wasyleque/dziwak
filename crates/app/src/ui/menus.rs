@@ -87,6 +87,10 @@ pub fn render_menu_bar(
                     app.selection_shape = SelectionShape::Rect;
                     ui.close();
                 }
+                if ui.button(tr("Według koloru (Shift+O)")).clicked() {
+                    app.active_tool = ActiveTool::SelectColor;
+                    ui.close();
+                }
                 #[cfg(feature = "ai")]
                 {
                     ui.separator();
@@ -140,8 +144,52 @@ pub fn render_menu_bar(
                 ui.checkbox(&mut app.show_tile_grid, tr("Pokaż siatkę kafli"));
             });
 
-            // 5. Obraz (Spłaszcz obraz)
+            // 5. Obraz (Skaluj obraz, Rozmiar płótna, Przytnij do zaznaczenia, obroty, odbicia, spłaszczanie)
             ui.menu_button(tr("Obraz"), |ui| {
+                if ui.button(tr("Skaluj obraz...")).clicked() {
+                    app.open_scale_image_dialog();
+                    ui.close();
+                }
+                if ui.button(tr("Rozmiar płótna...")).clicked() {
+                    app.open_canvas_size_dialog();
+                    ui.close();
+                }
+                ui.separator();
+                let can_crop_to_sel =
+                    app.selection.has_selection && app.selection.bounds().is_some();
+                if ui
+                    .add_enabled(
+                        can_crop_to_sel,
+                        egui::Button::new(tr("Przytnij do zaznaczenia")),
+                    )
+                    .clicked()
+                {
+                    app.crop_to_selection();
+                    ui.close();
+                }
+                ui.separator();
+                if ui.button(tr("Obróć 90° w prawo")).clicked() {
+                    app.rotate_image_90_cw();
+                    ui.close();
+                }
+                if ui.button(tr("Obróć 90° w lewo")).clicked() {
+                    app.rotate_image_90_ccw();
+                    ui.close();
+                }
+                if ui.button(tr("Obróć 180°")).clicked() {
+                    app.rotate_image_180();
+                    ui.close();
+                }
+                ui.separator();
+                if ui.button(tr("Odbij poziomo")).clicked() {
+                    app.flip_image_horizontal();
+                    ui.close();
+                }
+                if ui.button(tr("Odbij pionowo")).clicked() {
+                    app.flip_image_vertical();
+                    ui.close();
+                }
+                ui.separator();
                 let can_flatten = app.document.layer_count() > 1;
                 if ui
                     .add_enabled(can_flatten, egui::Button::new(tr("Spłaszcz obraz")))
@@ -160,6 +208,40 @@ pub fn render_menu_bar(
                 }
                 if ui.button(tr("Duplikuj warstwę")).clicked() {
                     app.duplicate_active_layer();
+                    ui.close();
+                }
+                ui.separator();
+                let has_layers = !app.document.layers.is_empty();
+                if ui
+                    .add_enabled(has_layers, egui::Button::new(tr("Obróć warstwę...")))
+                    .clicked()
+                {
+                    app.open_transform_dialog(crate::state::LayerTransformKind::Rotate {
+                        angle_deg: 0.0,
+                    });
+                    ui.close();
+                }
+                if ui
+                    .add_enabled(has_layers, egui::Button::new(tr("Skaluj warstwę...")))
+                    .clicked()
+                {
+                    let (w, h) = (app.document.width, app.document.height);
+                    app.open_transform_dialog(crate::state::LayerTransformKind::Scale {
+                        width: w,
+                        height: h,
+                        orig_width: w,
+                        orig_height: h,
+                        keep_aspect: true,
+                    });
+                    ui.close();
+                }
+                if ui
+                    .add_enabled(has_layers, egui::Button::new(tr("Odbij warstwę...")))
+                    .clicked()
+                {
+                    app.open_transform_dialog(crate::state::LayerTransformKind::Flip {
+                        horizontal: true,
+                    });
                     ui.close();
                 }
                 ui.separator();
@@ -238,40 +320,110 @@ pub fn render_menu_bar(
 
             // 8. Narzędzia
             ui.menu_button(tr("Narzędzia"), |ui| {
-                if ui.button(tr("Przesuwanie (Spacja)")).clicked() {
-                    app.active_tool = ActiveTool::Pan;
-                    ui.close();
-                }
-                if ui.button(tr("Pędzel (B)")).clicked() {
-                    app.active_tool = ActiveTool::Brush;
-                    ui.close();
-                }
-                if ui.button(tr("Gumka (E)")).clicked() {
-                    app.active_tool = ActiveTool::Eraser;
-                    ui.close();
-                }
-                if ui.button(tr("Kubełek (G)")).clicked() {
-                    app.active_tool = ActiveTool::Bucket;
-                    ui.close();
-                }
-                if ui.button(tr("Gradient (Shift+G)")).clicked() {
-                    app.active_tool = ActiveTool::Gradient;
-                    ui.close();
-                }
-                if ui.button(tr("Pipeta (I)")).clicked() {
-                    app.active_tool = ActiveTool::Eyedropper;
-                    ui.close();
-                }
-                if ui.button(tr("Zaznaczenie prostokątne (M)")).clicked() {
+                if ui.button(tr("Zaznaczenie prostokątne (R)")).clicked() {
                     app.active_tool = ActiveTool::SelectRect;
                     ui.close();
                 }
-                if ui.button(tr("Zaznaczenie eliptyczne (Shift+M)")).clicked() {
+                if ui.button(tr("Zaznaczenie eliptyczne (E)")).clicked() {
                     app.active_tool = ActiveTool::SelectEllipse;
+                    ui.close();
+                }
+                if ui.button(tr("Zaznaczenie odręczne (F)")).clicked() {
+                    app.active_tool = ActiveTool::SelectFree;
                     ui.close();
                 }
                 if ui.button(tr("Różdżka (U)")).clicked() {
                     app.active_tool = ActiveTool::MagicWand;
+                    ui.close();
+                }
+                if ui.button(tr("Zaznaczenie wg koloru (Shift+O)")).clicked() {
+                    app.active_tool = ActiveTool::SelectColor;
+                    ui.close();
+                }
+                ui.separator();
+                if ui.button(tr("Przesuwanie (M)")).clicked() {
+                    app.active_tool = ActiveTool::Move;
+                    ui.close();
+                }
+                if ui.button(tr("Kadrowanie (Shift+C)")).clicked() {
+                    app.active_tool = ActiveTool::Crop;
+                    ui.close();
+                }
+                if ui.button(tr("Obrót (Shift+R)")).clicked() {
+                    app.set_active_tool(ActiveTool::Rotate);
+                    ui.close();
+                }
+                if ui.button(tr("Skalowanie (Shift+T)")).clicked() {
+                    app.set_active_tool(ActiveTool::Scale);
+                    ui.close();
+                }
+                if ui.button(tr("Odbicie (Shift+F)")).clicked() {
+                    app.set_active_tool(ActiveTool::Flip);
+                    ui.close();
+                }
+                ui.separator();
+                if ui.button(tr("Ołówek (N)")).clicked() {
+                    app.active_tool = ActiveTool::Pencil;
+                    ui.close();
+                }
+                if ui.button(tr("Pędzel (P)")).clicked() {
+                    app.active_tool = ActiveTool::Brush;
+                    ui.close();
+                }
+                if ui.button(tr("Aerograf (A)")).clicked() {
+                    app.active_tool = ActiveTool::Airbrush;
+                    ui.close();
+                }
+                if ui.button(tr("Gumka (Shift+E)")).clicked() {
+                    app.active_tool = ActiveTool::Eraser;
+                    ui.close();
+                }
+                if ui.button(tr("Kubełek (Shift+B)")).clicked() {
+                    app.active_tool = ActiveTool::Bucket;
+                    ui.close();
+                }
+                if ui.button(tr("Gradient (G)")).clicked() {
+                    app.active_tool = ActiveTool::Gradient;
+                    ui.close();
+                }
+                if ui.button(tr("Klonowanie (C)")).clicked() {
+                    app.active_tool = ActiveTool::Clone;
+                    ui.close();
+                }
+                if ui.button(tr("Rozmazywanie (Shift+S)")).clicked() {
+                    app.active_tool = ActiveTool::Smudge;
+                    ui.close();
+                }
+                if ui
+                    .button(tr("Rozjaśnianie/Ściemnianie (Shift+D)"))
+                    .clicked()
+                {
+                    app.active_tool = ActiveTool::DodgeBurn;
+                    ui.close();
+                }
+                if ui.button(tr("Rozmywanie/Wyostrzanie (Shift+U)")).clicked() {
+                    app.active_tool = ActiveTool::BlurSharpen;
+                    ui.close();
+                }
+                ui.separator();
+                if ui.button(tr("Pipeta (O)")).clicked() {
+                    app.active_tool = ActiveTool::Eyedropper;
+                    ui.close();
+                }
+                if ui.button(tr("Tekst (T)")).clicked() {
+                    app.set_active_tool(ActiveTool::Text);
+                    ui.close();
+                }
+                if ui.button(tr("Lupa (Z)")).clicked() {
+                    app.active_tool = ActiveTool::Zoom;
+                    ui.close();
+                }
+                if ui.button(tr("Miarka (Shift+M)")).clicked() {
+                    app.active_tool = ActiveTool::Measure;
+                    ui.close();
+                }
+                if ui.button(tr("Przesuwanie widoku (Spacja)")).clicked() {
+                    app.active_tool = ActiveTool::Pan;
                     ui.close();
                 }
             });

@@ -142,6 +142,266 @@ pub fn apply_dab(
     }
 }
 
+/// Rozjaśnianie (amount > 0) lub ściemnianie (amount < 0) piksela premultiplied; amount w -1.0..=1.0.
+pub fn dodge_burn_pixel(px: Rgba8, amount: f32) -> Rgba8 {
+    if px.a() == 0 {
+        return px;
+    }
+    let [r, g, b, a] = px.to_straight();
+    let amount = amount.clamp(-1.0, 1.0);
+    let f = |v: u8| -> u8 {
+        let v = v as f32;
+        let n = if amount >= 0.0 {
+            v + (255.0 - v) * amount
+        } else {
+            v * (1.0 + amount)
+        };
+        n.round().clamp(0.0, 255.0) as u8
+    };
+    Rgba8::from_straight(f(r), f(g), f(b), a)
+}
+
+/// Rozjaśnianie (amount > 0) / ściemnianie (amount < 0) pędzlem: każdy piksel w okręgu dostaje dodge_burn_pixel(px, amount * falloff * pokrycie zaznaczenia).
+#[allow(clippy::too_many_arguments)]
+pub fn dodge_burn_dab(
+    layer: &mut Layer,
+    cx: f32,
+    cy: f32,
+    radius: f32,
+    hardness: f32,
+    amount: f32,
+    selection: Option<&Selection>,
+) -> Option<Rect> {
+    if radius <= 0.0 || amount == 0.0 || layer.pixels.width == 0 || layer.pixels.height == 0 {
+        return None;
+    }
+
+    let (w, h) = (layer.pixels.width as i64, layer.pixels.height as i64);
+    let x0 = ((cx - radius).floor() as i64).max(0);
+    let y0 = ((cy - radius).floor() as i64).max(0);
+    let x1 = ((cx + radius).ceil() as i64).min(w - 1);
+    let y1 = ((cy + radius).ceil() as i64).min(h - 1);
+    if x0 > x1 || y0 > y1 {
+        return None;
+    }
+
+    let mut changed: Option<(u32, u32, u32, u32)> = None;
+    for y in y0..=y1 {
+        for x in x0..=x1 {
+            let dist = ((x as f32 + 0.5 - cx).powi(2) + (y as f32 + 0.5 - cy).powi(2)).sqrt();
+            let falloff = brush_falloff(dist, radius, hardness) as f32 / 255.0;
+            let cov = selection.map_or(1.0, |s| s.coverage(x as u32, y as u32) as f32 / 255.0);
+            let k = falloff * cov;
+            if k <= 0.0 {
+                continue;
+            }
+
+            let dst = layer
+                .get_pixel(x as u32, y as u32)
+                .unwrap_or(Rgba8::TRANSPARENT);
+            let out = dodge_burn_pixel(dst, amount * k);
+            if out != dst {
+                let _ = layer.set_pixel(x as u32, y as u32, out);
+                let (ux, uy) = (x as u32, y as u32);
+                changed = Some(match changed {
+                    None => (ux, uy, ux, uy),
+                    Some((a, b, c, d)) => (a.min(ux), b.min(uy), c.max(ux), d.max(uy)),
+                });
+            }
+        }
+    }
+
+    changed.map(|(a, b, c, d)| Rect::new(a, b, c - a + 1, d - b + 1))
+}
+
+/// Mieszanie dwóch pikseli premultiplied (rozmazywanie): t = 0 daje a, t = 1 daje b.
+pub fn mix_pixels(a: Rgba8, b: Rgba8, t: f32) -> Rgba8 {
+    let t = t.clamp(0.0, 1.0);
+    let m = |x: u8, y: u8| (x as f32 + (y as f32 - x as f32) * t).round() as u8;
+    Rgba8::new(
+        m(a.r(), b.r()),
+        m(a.g(), b.g()),
+        m(a.b(), b.b()),
+        m(a.a(), b.a()),
+    )
+}
+
+/// Klonowanie: maluje na `layer` pikselami z `source` przesuniętymi o (dx, dy) (piksel docelowy (x, y) bierze źródło (x + dx, y + dy)).
+/// Krycie jak w apply_dab: brush_falloff(odległość, radius, hardness) * opacity, przycięte do zaznaczenia.
+#[allow(clippy::too_many_arguments)]
+pub fn clone_dab(
+    layer: &mut Layer,
+    source: &crate::layer::TiledLayer,
+    cx: f32,
+    cy: f32,
+    dx: i32,
+    dy: i32,
+    radius: f32,
+    hardness: f32,
+    opacity: f32,
+    selection: Option<&Selection>,
+) -> Option<Rect> {
+    if radius <= 0.0 || opacity <= 0.0 || layer.pixels.width == 0 || layer.pixels.height == 0 {
+        return None;
+    }
+    let (w, h) = (layer.pixels.width as i64, layer.pixels.height as i64);
+    let x0 = ((cx - radius).floor() as i64).max(0);
+    let y0 = ((cy - radius).floor() as i64).max(0);
+    let x1 = ((cx + radius).ceil() as i64).min(w - 1);
+    let y1 = ((cy + radius).ceil() as i64).min(h - 1);
+    if x0 > x1 || y0 > y1 {
+        return None;
+    }
+    let mut changed: Option<(u32, u32, u32, u32)> = None;
+    for y in y0..=y1 {
+        for x in x0..=x1 {
+            let dist = ((x as f32 + 0.5 - cx).powi(2) + (y as f32 + 0.5 - cy).powi(2)).sqrt();
+            let falloff = brush_falloff(dist, radius, hardness) as f32 / 255.0;
+            let cov = selection.map_or(1.0, |s| s.coverage(x as u32, y as u32) as f32 / 255.0);
+            let k = (falloff * opacity.clamp(0.0, 1.0) * cov * 255.0).round() as u32;
+            if k == 0 {
+                continue;
+            }
+            let (sx, sy) = (x + dx as i64, y + dy as i64);
+            if sx < 0 || sy < 0 || sx >= source.width as i64 || sy >= source.height as i64 {
+                continue;
+            }
+            let src = source
+                .get_pixel(sx as u32, sy as u32)
+                .unwrap_or(Rgba8::TRANSPARENT);
+            let dst = layer
+                .get_pixel(x as u32, y as u32)
+                .unwrap_or(Rgba8::TRANSPARENT);
+            let out = crate::brush::mix_pixels(dst, src, k as f32 / 255.0);
+            if out != dst {
+                let _ = layer.set_pixel(x as u32, y as u32, out);
+                let (ux, uy) = (x as u32, y as u32);
+                changed = Some(match changed {
+                    None => (ux, uy, ux, uy),
+                    Some((a, b, c, d)) => (a.min(ux), b.min(uy), c.max(ux), d.max(uy)),
+                });
+            }
+        }
+    }
+    changed.map(|(a, b, c, d)| Rect::new(a, b, c - a + 1, d - b + 1))
+}
+
+/// Rozmywanie (amount > 0) lub wyostrzanie (amount < 0) pędzlem w obszarze okręgu o środku (cx, cy).
+/// Wykorzystuje blur_pass do rozmycia małego bufora wokół pędzla i mix_pixels.
+#[allow(clippy::too_many_arguments)]
+pub fn blur_sharpen_dab(
+    layer: &mut Layer,
+    cx: f32,
+    cy: f32,
+    radius: f32,
+    hardness: f32,
+    amount: f32,
+    selection: Option<&Selection>,
+) -> Option<Rect> {
+    if radius <= 0.0 || amount == 0.0 || layer.pixels.width == 0 || layer.pixels.height == 0 {
+        return None;
+    }
+
+    let (w, h) = (layer.pixels.width as i64, layer.pixels.height as i64);
+    let x0 = ((cx - radius).floor() as i64).max(0);
+    let y0 = ((cy - radius).floor() as i64).max(0);
+    let x1 = ((cx + radius).ceil() as i64).min(w - 1);
+    let y1 = ((cy + radius).ceil() as i64).min(h - 1);
+    if x0 > x1 || y0 > y1 {
+        return None;
+    }
+
+    // Pobieramy bufor z zapasem 2 px z każdej strony dla splotu gaussa
+    let pad = 2i64;
+    let bx0 = (x0 - pad).max(0);
+    let by0 = (y0 - pad).max(0);
+    let bx1 = (x1 + pad).min(w - 1);
+    let by1 = (y1 + pad).min(h - 1);
+    let bw = (bx1 - bx0 + 1) as usize;
+    let bh = (by1 - by0 + 1) as usize;
+
+    let mut src_buf = Vec::with_capacity(bw * bh);
+    for y in by0..=by1 {
+        for x in bx0..=bx1 {
+            src_buf.push(
+                layer
+                    .get_pixel(x as u32, y as u32)
+                    .unwrap_or(Rgba8::TRANSPARENT),
+            );
+        }
+    }
+
+    let kernel = [0.25f32, 0.5f32, 0.25f32];
+    let mut tmp_buf = vec![Rgba8::TRANSPARENT; bw * bh];
+    let mut blurred_buf = vec![Rgba8::TRANSPARENT; bw * bh];
+
+    // Przejście poziome i pionowe
+    crate::blur::blur_pass(&src_buf, &mut tmp_buf, bw, bh, &kernel, true);
+    crate::blur::blur_pass(&tmp_buf, &mut blurred_buf, bw, bh, &kernel, false);
+
+    let amount_clamped = amount.clamp(-1.0, 1.0);
+    let mut changed: Option<(u32, u32, u32, u32)> = None;
+
+    for y in y0..=y1 {
+        let py = y as f32 + 0.5;
+        let dy = py - cy;
+        let local_y = (y - by0) as usize;
+
+        for x in x0..=x1 {
+            let px = x as f32 + 0.5;
+            let dx = px - cx;
+            let dist = dx.hypot(dy);
+
+            if dist > radius {
+                continue;
+            }
+
+            let falloff = brush_falloff(dist, radius, hardness) as f32 / 255.0;
+            let cov = selection.map_or(1.0, |s| s.coverage(x as u32, y as u32) as f32 / 255.0);
+            let k = falloff * cov;
+            if k <= 0.0 {
+                continue;
+            }
+
+            let local_x = (x - bx0) as usize;
+            let idx = local_y * bw + local_x;
+            let orig = src_buf[idx];
+            let blurred = blurred_buf[idx];
+
+            let target = if amount_clamped >= 0.0 {
+                // Rozmycie: mieszamy oryginał z rozmytym
+                mix_pixels(orig, blurred, amount_clamped)
+            } else {
+                // Wyostrzanie: unsharp mask: orig + (orig - blurred) * (-amount)
+                let factor = -amount_clamped;
+                let clamp_u8 = |val: f32| val.round().clamp(0.0, 255.0) as u8;
+                let calc = |o: u8, b: u8| -> u8 {
+                    let diff = o as f32 - b as f32;
+                    clamp_u8(o as f32 + diff * factor)
+                };
+                Rgba8::new(
+                    calc(orig.r(), blurred.r()),
+                    calc(orig.g(), blurred.g()),
+                    calc(orig.b(), blurred.b()),
+                    calc(orig.a(), blurred.a()),
+                )
+            };
+
+            let out = mix_pixels(orig, target, k);
+            if out != orig {
+                let _ = layer.set_pixel(x as u32, y as u32, out);
+                let (ux, uy) = (x as u32, y as u32);
+                changed = Some(match changed {
+                    None => (ux, uy, ux, uy),
+                    Some((a, b, c, d)) => (a.min(ux), b.min(uy), c.max(ux), d.max(uy)),
+                });
+            }
+        }
+    }
+
+    changed.map(|(a, b, c, d)| Rect::new(a, b, c - a + 1, d - b + 1))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -334,5 +594,86 @@ mod tests {
         assert_eq!(layer.get_pixel(48, 48), Some(Rgba8::TRANSPARENT));
         assert_eq!(layer.get_pixel(48, 52), Some(Rgba8::TRANSPARENT));
         assert_eq!(layer.get_pixel(52, 48), Some(Rgba8::TRANSPARENT));
+    }
+
+    #[test]
+    fn test_dodge_burn_and_mix() {
+        let px = Rgba8::new(100, 100, 100, 255);
+        let d = dodge_burn_pixel(px, 0.5);
+        assert!((177..=179).contains(&d.r()) && d.a() == 255);
+        let b = dodge_burn_pixel(px, -0.5);
+        assert!((49..=51).contains(&b.r()));
+        assert_eq!(
+            dodge_burn_pixel(Rgba8::TRANSPARENT, 1.0),
+            Rgba8::TRANSPARENT
+        );
+        let (a, c) = (Rgba8::new(0, 0, 0, 255), Rgba8::new(200, 100, 50, 255));
+        assert_eq!(mix_pixels(a, c, 0.0), a);
+        assert_eq!(mix_pixels(a, c, 1.0), c);
+        assert_eq!(mix_pixels(a, c, 0.5), Rgba8::new(100, 50, 25, 255));
+    }
+
+    #[test]
+    fn test_dodge_burn_dab() {
+        let mut layer = Layer::new("t", 10, 10);
+
+        // Wypełniamy całą warstwę szarym kolorem
+        for y in 0..10 {
+            for x in 0..10 {
+                layer
+                    .set_pixel(x, y, Rgba8::new(100, 100, 100, 255))
+                    .unwrap();
+            }
+        }
+
+        // Wykonujemy dodge_burn_dab z rozjaśnieniem (amount = 0.5)
+        let rect = dodge_burn_dab(&mut layer, 5.0, 5.0, 2.0, 1.0, 0.5, None);
+
+        assert!(rect.is_some());
+
+        // Piksel centralny powinien być jaśniejszy
+        assert!(layer.get_pixel(5, 5).unwrap().r() > 150);
+
+        // Piksel w rogu nie powinien się zmienić
+        assert_eq!(
+            layer.get_pixel(0, 0).unwrap(),
+            Rgba8::new(100, 100, 100, 255)
+        );
+    }
+
+    #[test]
+    fn test_clone_dab() {
+        let mut layer = Layer::new("t", 20, 20);
+        let mut source = crate::layer::TiledLayer::new(20, 20);
+        source
+            .set_pixel(15, 10, Rgba8::new(255, 0, 0, 255))
+            .unwrap();
+
+        let rect = clone_dab(&mut layer, &source, 5.5, 10.5, 10, 0, 2.0, 1.0, 1.0, None);
+
+        assert!(rect.is_some());
+        assert_eq!(layer.get_pixel(5, 10), Some(Rgba8::new(255, 0, 0, 255)));
+    }
+
+    #[test]
+    fn test_blur_sharpen_dab() {
+        let mut layer = Layer::new("t", 10, 10);
+        // Single white pixel in the center
+        let white = Rgba8::new(255, 255, 255, 255);
+        layer.set_pixel(5, 5, white).unwrap();
+
+        // Blur dab over the center
+        let rect = blur_sharpen_dab(&mut layer, 5.5, 5.5, 3.0, 1.0, 1.0, None);
+        assert!(rect.is_some());
+        // Center pixel should be diffused/blurred (lower than 255)
+        let center = layer.get_pixel(5, 5).unwrap();
+        assert!(center.r() < 255 && center.r() > 0);
+        // Neighboring pixel should now have some brightness
+        let neighbor = layer.get_pixel(4, 5).unwrap();
+        assert!(neighbor.r() > 0);
+
+        // Sharpen dab
+        let rect_sharp = blur_sharpen_dab(&mut layer, 5.5, 5.5, 3.0, 1.0, -1.0, None);
+        assert!(rect_sharp.is_some());
     }
 }

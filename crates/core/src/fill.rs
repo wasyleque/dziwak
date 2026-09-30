@@ -218,6 +218,31 @@ pub fn mask_alpha(layer: &mut Layer, mask: &[u8]) -> Option<Rect> {
     }
 }
 
+/// Zaznaczenie wg koloru: 255 dla każdego piksela w całym obrazie podobnego do `color` (tolerancja jak w flood_fill_mask), inaczej 0.
+pub fn color_select_mask(
+    buf: &[Rgba8],
+    w: usize,
+    h: usize,
+    color: Rgba8,
+    tolerance: u8,
+) -> Vec<u8> {
+    if buf.len() != w * h {
+        return vec![0; w * h];
+    }
+
+    // Funkcja porównująca kolory
+    fn pasuje(px: Rgba8, target: Rgba8, tol: u8) -> bool {
+        let dr = (px.r() as i16 - target.r() as i16).abs();
+        let dg = (px.g() as i16 - target.g() as i16).abs();
+        let db = (px.b() as i16 - target.b() as i16).abs();
+        dr <= tol as i16 && dg <= tol as i16 && db <= tol as i16
+    }
+
+    buf.iter()
+        .map(|&px| if pasuje(px, color, tolerance) { 255 } else { 0 })
+        .collect()
+}
+
 /// Maska tła połączonego z brzegami obrazu: suma (max) flood_fill_mask uruchomionych z 4 rogów z tolerancją `tolerance`.
 pub fn border_background_mask(buf: &[Rgba8], w: usize, h: usize, tolerance: u8) -> Vec<u8> {
     if w == 0 || h == 0 || buf.len() != w * h {
@@ -383,6 +408,22 @@ mod tests {
         let mask = vec![255u8; 16];
         let r = mask_alpha(&mut layer, &mask);
         assert_eq!(r, None);
+    }
+
+    #[test]
+    fn test_color_select_mask() {
+        // Testy dla color_select_mask
+        let buf = vec![
+            Rgba8::new(255, 0, 0, 255), // A
+            Rgba8::new(0, 0, 255, 255), // B
+            Rgba8::new(255, 0, 0, 255), // A
+        ];
+        let mask = color_select_mask(&buf, 3, 1, Rgba8::new(255, 0, 0, 255), 0);
+        assert_eq!(mask, vec![255, 0, 255]);
+
+        // Test zła długość
+        let mask = color_select_mask(&buf, 3, 1, Rgba8::new(255, 0, 0, 255), 0);
+        assert_eq!(mask, vec![255, 0, 255]);
     }
 
     #[test]

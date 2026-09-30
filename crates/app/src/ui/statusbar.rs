@@ -20,6 +20,22 @@ pub fn render_statusbar(app: &mut DziwakApp, ctx: &egui::Context) {
             }
             ui.separator();
 
+            // Pomiar miarki: długość i kąt w pasku stanu (T11)
+            if let Some((len, angle, dx, dy)) = app.measure_stats() {
+                ui.label(format!(
+                    "{}: {:.1} px, {:.1}° (Δ: {:.1}, {:.1})",
+                    tr("Miarka"),
+                    len,
+                    angle,
+                    dx,
+                    dy
+                ));
+                ui.separator();
+            } else if app.active_tool == crate::state::ActiveTool::Measure {
+                ui.label(tr("Miarka: przeciągnij po płótnie"));
+                ui.separator();
+            }
+
             // Zoom combo (12.5%..1600%)
             let current_zoom_pct = format!("{:.0}%", app.transform.zoom * 100.0);
             egui::ComboBox::from_id_salt("statusbar_zoom_combo")

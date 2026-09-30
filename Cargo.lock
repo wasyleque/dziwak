@@ -769,6 +769,7 @@ dependencies = [
 name = "dziwak-core"
 version = "0.1.0"
 dependencies = [
+ "ab_glyph",
  "image",
  "lz4_flex",
  "thiserror 2.0.21",

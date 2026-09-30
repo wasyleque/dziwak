@@ -38,36 +38,39 @@ pub fn render_app(app: &mut DziwakApp, ctx: &egui::Context, _frame: &mut eframe:
 
     // Skróty jednoklawiszowe narzędzi i operacji kolorów (aktywne gdy nie wprowadzamy tekstu)
     if !ctx.wants_keyboard_input() && app.editing_layer_index.is_none() {
-        // Gradient: Shift+G
-        if ctx.input_mut(|i| i.consume_key(egui::Modifiers::SHIFT, egui::Key::G)) {
+        // Gradient: G
+        if ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::G)) {
             app.active_tool = ActiveTool::Gradient;
-        } else if ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::G)) {
-            // Kubełek: G
+        }
+
+        // Kubełek: Shift+B
+        if ctx.input_mut(|i| i.consume_key(egui::Modifiers::SHIFT, egui::Key::B)) {
             app.active_tool = ActiveTool::Bucket;
         }
 
+        // Klonowanie: C
+        if ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::C)) {
+            app.active_tool = ActiveTool::Clone;
+        }
+
         // Reset kolorów: D (czarny/biały)
-        if ctx.input_mut(|i| {
-            i.consume_key(egui::Modifiers::NONE, egui::Key::D)
-                || i.consume_key(egui::Modifiers::SHIFT, egui::Key::D)
-        }) {
+        if ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::D)) {
             app.brush_color = egui::Color32::BLACK;
             app.bg_color = egui::Color32::WHITE;
         }
 
-        // Pipeta: I
-        if ctx.input_mut(|i| {
-            i.consume_key(egui::Modifiers::NONE, egui::Key::I)
-                || i.consume_key(egui::Modifiers::SHIFT, egui::Key::I)
-        }) {
+        // Pipeta: O
+        if ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::O)) {
             app.active_tool = ActiveTool::Eyedropper;
         }
 
+        // Zaznaczenie wg koloru: Shift+O
+        if ctx.input_mut(|i| i.consume_key(egui::Modifiers::SHIFT, egui::Key::O)) {
+            app.active_tool = ActiveTool::SelectColor;
+        }
+
         // Zamiana koloru pierwszoplanowego i tła: X
-        if ctx.input_mut(|i| {
-            i.consume_key(egui::Modifiers::NONE, egui::Key::X)
-                || i.consume_key(egui::Modifiers::SHIFT, egui::Key::X)
-        }) {
+        if ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::X)) {
             std::mem::swap(&mut app.brush_color, &mut app.bg_color);
         }
 
@@ -76,27 +79,91 @@ pub fn render_app(app: &mut DziwakApp, ctx: &egui::Context, _frame: &mut eframe:
             app.active_tool = ActiveTool::MagicWand;
         }
 
-        // Zaznaczenie eliptyczne: Shift+M, prostokątne: M
-        if ctx.input_mut(|i| i.consume_key(egui::Modifiers::SHIFT, egui::Key::M)) {
+        // Zaznaczenie eliptyczne: E, prostokątne: R
+        if ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::E)) {
             app.active_tool = ActiveTool::SelectEllipse;
-        } else if ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::M)) {
+        } else if ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::R)) {
             app.active_tool = ActiveTool::SelectRect;
         }
 
-        // Pędzel: B
-        if ctx.input_mut(|i| {
-            i.consume_key(egui::Modifiers::NONE, egui::Key::B)
-                || i.consume_key(egui::Modifiers::SHIFT, egui::Key::B)
-        }) {
+        // Ołówek: N
+        if ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::N)) {
+            app.active_tool = ActiveTool::Pencil;
+        }
+
+        // Pędzel: P
+        if ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::P)) {
             app.active_tool = ActiveTool::Brush;
         }
 
-        // Gumka: E
-        if ctx.input_mut(|i| {
-            i.consume_key(egui::Modifiers::NONE, egui::Key::E)
-                || i.consume_key(egui::Modifiers::SHIFT, egui::Key::E)
-        }) {
+        // Aerograf: A
+        if ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::A)) {
+            app.active_tool = ActiveTool::Airbrush;
+        }
+
+        // Przesuwanie: M
+        if ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::M)) {
+            app.active_tool = ActiveTool::Move;
+        }
+
+        // Gumka: Shift+E
+        if ctx.input_mut(|i| i.consume_key(egui::Modifiers::SHIFT, egui::Key::E)) {
             app.active_tool = ActiveTool::Eraser;
+        }
+
+        // Kadrowanie: Shift+C
+        if ctx.input_mut(|i| i.consume_key(egui::Modifiers::SHIFT, egui::Key::C)) {
+            app.active_tool = ActiveTool::Crop;
+        }
+
+        // Obrót: Shift+R
+        if ctx.input_mut(|i| i.consume_key(egui::Modifiers::SHIFT, egui::Key::R)) {
+            app.set_active_tool(ActiveTool::Rotate);
+        }
+
+        // Skalowanie: Shift+T
+        if ctx.input_mut(|i| i.consume_key(egui::Modifiers::SHIFT, egui::Key::T)) {
+            app.set_active_tool(ActiveTool::Scale);
+        }
+
+        // Odbicie: Shift+F
+        if ctx.input_mut(|i| i.consume_key(egui::Modifiers::SHIFT, egui::Key::F)) {
+            app.set_active_tool(ActiveTool::Flip);
+        }
+
+        // Rozmazywanie: Shift+S
+        if ctx.input_mut(|i| i.consume_key(egui::Modifiers::SHIFT, egui::Key::S)) {
+            app.active_tool = ActiveTool::Smudge;
+        }
+
+        // Rozjaśnianie / ściemnianie: Shift+D
+        if ctx.input_mut(|i| i.consume_key(egui::Modifiers::SHIFT, egui::Key::D)) {
+            app.active_tool = ActiveTool::DodgeBurn;
+        }
+
+        // Rozmywanie / wyostrzanie: Shift+U
+        if ctx.input_mut(|i| i.consume_key(egui::Modifiers::SHIFT, egui::Key::U)) {
+            app.active_tool = ActiveTool::BlurSharpen;
+        }
+
+        // Zaznaczenie odręczne: F
+        if ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::F)) {
+            app.active_tool = ActiveTool::SelectFree;
+        }
+
+        // Tekst: T
+        if ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::T)) {
+            app.set_active_tool(ActiveTool::Text);
+        }
+
+        // Lupa: Z
+        if ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Z)) {
+            app.active_tool = ActiveTool::Zoom;
+        }
+
+        // Miarka: Shift+M
+        if ctx.input_mut(|i| i.consume_key(egui::Modifiers::SHIFT, egui::Key::M)) {
+            app.active_tool = ActiveTool::Measure;
         }
     }
 
@@ -127,6 +194,26 @@ pub fn render_app(app: &mut DziwakApp, ctx: &egui::Context, _frame: &mut eframe:
 
     // Widok: Shift+Ctrl+J = dopasuj do okna, Shift+J = wyśrodkuj obraz (jak w GIMP-ie)
     if !ctx.wants_keyboard_input() {
+        if app.active_tool == ActiveTool::Crop {
+            let enter_pressed =
+                ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Enter));
+            if enter_pressed {
+                if app.commit_crop() {
+                    should_fit_to_viewport = true;
+                }
+            } else if ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
+                app.cancel_crop();
+            }
+        } else if app.active_tool == ActiveTool::SelectFree && !app.free_select_points.is_empty() {
+            let enter_pressed =
+                ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Enter));
+            if enter_pressed {
+                app.finish_free_select();
+            } else if ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
+                app.cancel_free_select();
+            }
+        }
+
         ctx.input_mut(|i| {
             if i.consume_key(egui::Modifiers::CTRL | egui::Modifiers::SHIFT, egui::Key::J) {
                 should_fit_to_viewport = true;

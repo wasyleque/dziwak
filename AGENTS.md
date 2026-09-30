@@ -91,3 +91,31 @@ Cel: układ i wygląd jak GIMP 2.10 (motyw Dark, ikony symboliczne), zachowując
 Model AI: `~/.local/share/dziwak/models/u2netp.onnx` (Apache-2.0, z wydań rembg), pobierany przez `scripts/fetch-models.sh`.
 - [x] M34a state.rs: remove_uniform_background, start_ai_background, poll_ai_background (kanał mpsc, wątek).
 - [x] M35 i18n: polski/angielski/hiszpański (Edycja → Język), tabela w app/src/i18n_table.rs przetłumaczona lokalnym modelem.
+
+## Narzędzia GIMP 2.10 (etapy T)
+
+Skróty jak w GIMP 2.10: R zazn. prostokątne, E zazn. eliptyczne, F odręczne, U różdżka, Shift+O wg koloru, M przesuwanie,
+Shift+C kadrowanie, Shift+R obrót, Shift+T skalowanie, Shift+F odbicie, N ołówek, P pędzel, A aerograf, Shift+E gumka,
+Shift+B kubełek, G gradient, O pipeta, C klonowanie, Shift+S rozmazywanie, Shift+D rozjaśnianie/ściemnianie,
+Shift+U rozmywanie/wyostrzanie, T tekst, Z lupa, Shift+M miarka, Spacja przesuwanie widoku.
+- [x] T0 Skróty jak wyżej + skrzynka narzędzi w grupach (zaznaczenia | transformacje | malowanie | kolory/inne) + ikony nowych narzędzi.
+- [x] T1 Przesuwanie (M): przeciąganie przesuwa piksele aktywnej warstwy (lub zawartość zaznaczenia), jedna pozycja historii.
+- [x] T2 Kadrowanie (Shift+C): prostokąt → Enter przycina dokument (wszystkie warstwy); Obraz → Przytnij do zaznaczenia.
+- [x] T3 Zaznaczenie odręczne (F): klikane wielokąty / przeciąganie, zamknięcie dwuklikiem lub Enter; maska wielokąta z AA.
+- [x] T4 Zaznaczenie wg koloru (Shift+O): wszystkie piksele o podobnym kolorze w całym obrazie.
+- [x] T5 Ołówek (N): twarde krawędzie bez wygładzania; Aerograf (A): nakładanie w czasie przy przytrzymaniu.
+- [x] T6 Transformacje warstwy: Odbicie poziome/pionowe (Shift+F), Obrót (Shift+R, dowolny kąt), Skalowanie (Shift+T), interpolacja dwuliniowa.
+- [x] T7 Obraz: Skaluj obraz, Rozmiar płótna, Obróć 90°/180°, Odbij obraz.
+- [x] T8 Klonowanie (C): Ctrl+klik = źródło, malowanie kopiuje z przesunięciem.
+- [x] T9 Rozmazywanie (Shift+S), Rozjaśnianie/Ściemnianie (Shift+D), Rozmywanie/Wyostrzanie pędzlem (Shift+U).
+- [x] T10 Tekst (T): warstwa tekstowa rastrowana czcionką (ab_glyph, czcionka z systemu lub wbudowana DejaVu).
+- [x] T11 Lupa (Z): klik = powiększ, Alt/Ctrl+klik = pomniejsz, przeciągnięcie = powiększ obszar; Miarka (Shift+M): długość i kąt w pasku stanu.
+Mikrozadania rdzenia (aider): 
+- [x] M36 `core/src/polygon.rs`: maska wielokąta (scanline even-odd, AA 4x w pionie) + testy.
+- [x] M37 `core/src/fill.rs`: `color_select_mask(buf, w, h, color, tol)` (globalnie) + testy.
+- [x] M38 `core/src/transform.rs`: flip_h/flip_v/rotate90/rotate180 dla TiledLayer + testy.
+- [x] M39 `core/src/transform.rs`: `resample_bilinear(src, sw, sh, dw, dh)` i `rotate_bilinear(src, w, h, angle)` na buforach Rgba8 + testy.
+- [x] M40 `core/src/document.rs`: `crop(rect)` i `resize_canvas(w, h, offset)` dla wszystkich warstw + testy.
+- [x] M41 `core/src/brush.rs`: dab ołówka bez AA; `dodge_burn`, `smudge` na pikselu (czysta matematyka) + testy.
+- [x] M42 `brush.rs`: `clone_dab(layer, source, cx, cy, dx, dy, radius, hardness, opacity, sel)` (klonowanie) + testy. Ołówek (T5) = apply_dab z hardness 1.0 (maska bez AA).
+- [x] M43 `core/src/text.rs`: `rasterize_text(font_data, text, size_px) -> Option<TextMask>` (ab_glyph, wiele linii) + `stamp_mask(layer, &TextMask, x, y, color)` + testy.

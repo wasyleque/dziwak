@@ -145,6 +145,118 @@ impl Document {
         self.layers.len()
     }
 
+    /// Przycina dokument (wszystkie warstwy) do prostokąta `rect` przyciętego do granic dokumentu.
+    pub fn crop(&mut self, rect: Rect) {
+        let x0 = rect.x.min(self.width);
+        let y0 = rect.y.min(self.height);
+        let x1 = rect.x.saturating_add(rect.width).min(self.width);
+        let y1 = rect.y.saturating_add(rect.height).min(self.height);
+        if x1 <= x0 || y1 <= y0 {
+            return;
+        }
+        let (nw, nh) = (x1 - x0, y1 - y0);
+        for layer in &mut self.layers {
+            let mut np = crate::layer::TiledLayer::new(nw, nh);
+            for y in 0..nh {
+                for x in 0..nw {
+                    if let Some(px) = layer.pixels.get_pixel(x0 + x, y0 + y) {
+                        if px.a() > 0 {
+                            let _ = np.set_pixel(x, y, px);
+                        }
+                    }
+                }
+            }
+            layer.pixels = np;
+        }
+        self.width = nw;
+        self.height = nh;
+    }
+
+    /// Zmienia rozmiar płótna na (w, h), przesuwając zawartość o (off_x, off_y); piksele poza płótnem są tracone.
+    pub fn resize_canvas(&mut self, w: u32, h: u32, off_x: i32, off_y: i32) {
+        if w == 0 || h == 0 {
+            return;
+        }
+        for layer in &mut self.layers {
+            let mut np = crate::layer::TiledLayer::new(w, h);
+            for y in 0..layer.pixels.height {
+                for x in 0..layer.pixels.width {
+                    let Some(px) = layer.pixels.get_pixel(x, y) else {
+                        continue;
+                    };
+                    if px.a() == 0 {
+                        continue;
+                    }
+                    let nx = x as i64 + off_x as i64;
+                    let ny = y as i64 + off_y as i64;
+                    if nx >= 0 && ny >= 0 && nx < w as i64 && ny < h as i64 {
+                        let _ = np.set_pixel(nx as u32, ny as u32, px);
+                    }
+                }
+            }
+            layer.pixels = np;
+        }
+        self.width = w;
+        self.height = h;
+    }
+
+    /// Skaluje cały dokument (wszystkie warstwy) do wymiarów (new_w, new_h) z interpolacją dwuliniową.
+    pub fn scale(&mut self, new_w: u32, new_h: u32) {
+        if new_w == 0 || new_h == 0 || self.width == 0 || self.height == 0 {
+            return;
+        }
+        for layer in &mut self.layers {
+            let buf = layer.pixels.to_vec();
+            let resampled = crate::transform::resample_bilinear(
+                &buf,
+                self.width as usize,
+                self.height as usize,
+                new_w as usize,
+                new_h as usize,
+            );
+            layer.pixels = crate::layer::TiledLayer::from_buffer(&resampled, new_w, new_h);
+        }
+        self.width = new_w;
+        self.height = new_h;
+    }
+
+    /// Obraca cały dokument (wszystkie warstwy) o 90 stopni zgodnie z ruchem wskazówek zegara.
+    pub fn rotate90_cw(&mut self) {
+        for layer in &mut self.layers {
+            layer.pixels = crate::transform::rotate90_cw(&layer.pixels);
+        }
+        std::mem::swap(&mut self.width, &mut self.height);
+    }
+
+    /// Obraca cały dokument (wszystkie warstwy) o 90 stopni przeciwnie do ruchu wskazówek zegara.
+    pub fn rotate90_ccw(&mut self) {
+        for layer in &mut self.layers {
+            layer.pixels = crate::transform::rotate90_ccw(&layer.pixels);
+        }
+        std::mem::swap(&mut self.width, &mut self.height);
+    }
+
+    /// Obraca cały dokument (wszystkie warstwy) o 180 stopni.
+    pub fn rotate180(&mut self) {
+        for layer in &mut self.layers {
+            layer.pixels = crate::transform::rotate180(&layer.pixels);
+        }
+    }
+
+    /// Odbija cały dokument (wszystkie warstwy) w poziomie.
+    pub fn flip_horizontal(&mut self) {
+        for layer in &mut self.layers {
+            layer.pixels = crate::transform::flip_horizontal(&layer.pixels);
+        }
+    }
+
+    /// Odbija cały dokument (wszystkie warstwy) w pionie.
+    pub fn flip_vertical(&mut self) {
+        for layer in &mut self.layers {
+            layer.pixels = crate::transform::flip_vertical(&layer.pixels);
+        }
+    }
+
     /// Sprawdza, czy dokument nie posiada żadnych warstw.
     pub fn is_empty(&self) -> bool {
         self.layers.is_empty()
@@ -538,5 +650,69 @@ mod tests {
 
         let mut zero_buf = [];
         assert!(doc.composite_rect(0, 0, 0, 0, &mut zero_buf).is_ok());
+    }
+
+    #[test]
+    fn test_crop_and_resize_canvas() {
+        let mut doc = Document::with_default_layer(100, 80, "t");
+        let red = Rgba8::new(255, 0, 0, 255);
+        doc.layers[0].set_pixel(60, 50, red).unwrap();
+        doc.crop(Rect::new(50, 40, 20, 20));
+        assert_eq!((doc.width, doc.height), (20, 20));
+        assert_eq!(doc.layers[0].get_pixel(10, 10), Some(red));
+        doc.crop(Rect::new(500, 500, 10, 10));
+        assert_eq!((doc.width, doc.height), (20, 20));
+        doc.resize_canvas(40, 30, 5, 3);
+        assert_eq!((doc.width, doc.height), (40, 30));
+        assert_eq!(doc.layers[0].get_pixel(15, 13), Some(red));
+    }
+
+    #[test]
+    fn test_document_transformations() {
+        let mut doc = Document::with_default_layer(10, 20, "L1");
+        doc.add_layer(Layer::new("L2", 10, 20));
+        let red = Rgba8::new(255, 0, 0, 255);
+        let blue = Rgba8::new(0, 0, 255, 255);
+        doc.layers[0].set_pixel(2, 4, red).unwrap();
+        doc.layers[1].set_pixel(2, 4, blue).unwrap();
+
+        // flip_horizontal
+        doc.flip_horizontal();
+        assert_eq!(doc.width, 10);
+        assert_eq!(doc.height, 20);
+        assert_eq!(doc.layers[0].get_pixel(7, 4), Some(red));
+        assert_eq!(doc.layers[1].get_pixel(7, 4), Some(blue));
+
+        // flip_vertical
+        doc.flip_vertical();
+        assert_eq!(doc.layers[0].get_pixel(7, 15), Some(red));
+        assert_eq!(doc.layers[1].get_pixel(7, 15), Some(blue));
+
+        // rotate180
+        doc.rotate180();
+        assert_eq!(doc.layers[0].get_pixel(2, 4), Some(red));
+        assert_eq!(doc.layers[1].get_pixel(2, 4), Some(blue));
+
+        // rotate90_cw: 10x20 -> 20x10. (2, 4) -> (20 - 1 - 4, 2) = (15, 2)
+        doc.rotate90_cw();
+        assert_eq!(doc.width, 20);
+        assert_eq!(doc.height, 10);
+        assert_eq!(doc.layers[0].get_pixel(15, 2), Some(red));
+        assert_eq!(doc.layers[1].get_pixel(15, 2), Some(blue));
+
+        // rotate90_ccw: 20x10 -> 10x20. (15, 2) -> (2, 4)
+        doc.rotate90_ccw();
+        assert_eq!(doc.width, 10);
+        assert_eq!(doc.height, 20);
+        assert_eq!(doc.layers[0].get_pixel(2, 4), Some(red));
+        assert_eq!(doc.layers[1].get_pixel(2, 4), Some(blue));
+
+        // scale: 10x20 -> 20x40
+        doc.scale(20, 40);
+        assert_eq!(doc.width, 20);
+        assert_eq!(doc.height, 40);
+        // Piksel powinien być przeskalowany w okolice (4..5, 8..9)
+        let px0 = doc.layers[0].get_pixel(4, 8).unwrap();
+        assert!(px0.a() > 0);
     }
 }
