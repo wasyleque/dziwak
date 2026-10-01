@@ -93,6 +93,84 @@ pub fn render_brushes_presets(app: &mut DziwakApp, ui: &mut egui::Ui) {
         });
 }
 
+/// Menu kontekstowe aktywnej warstwy (prawy przycisk w panelu Warstwy).
+fn layer_context_menu(app: &mut DziwakApp, ui: &mut egui::Ui) {
+    let count = app.document.layer_count();
+    let idx = app.active_layer_index;
+    if ui.button(tr("Nowa warstwa")).clicked() {
+        app.add_new_layer();
+        ui.close();
+    }
+    if ui.button(tr("Duplikuj warstwę")).clicked() {
+        app.duplicate_active_layer();
+        ui.close();
+    }
+    if ui
+        .add_enabled(count > 1, egui::Button::new(tr("Usuń warstwę")))
+        .clicked()
+    {
+        app.remove_active_layer();
+        ui.close();
+    }
+    ui.separator();
+    if ui
+        .add_enabled(idx + 1 < count, egui::Button::new(tr("Przesuń w górę")))
+        .clicked()
+    {
+        app.move_active_layer_up();
+        ui.close();
+    }
+    if ui
+        .add_enabled(idx > 0, egui::Button::new(tr("Przesuń w dół")))
+        .clicked()
+    {
+        app.move_active_layer_down();
+        ui.close();
+    }
+    if ui
+        .add_enabled(idx > 0, egui::Button::new(tr("Scal w dół")))
+        .clicked()
+    {
+        app.merge_active_layer_down();
+        ui.close();
+    }
+    ui.separator();
+    ui.add_enabled(false, egui::Button::new(tr("Dodaj kanał alfa")))
+        .on_disabled_hover_text(tr("Warstwy Dziwaka zawsze mają kanał alfa (RGBA)"));
+    if ui.button(tr("Alfa do zaznaczenia")).clicked() {
+        app.alpha_to_selection();
+        ui.close();
+    }
+    if ui
+        .button(tr("Kolor na przezroczystość"))
+        .on_hover_text(tr("Usuwa kolor pierwszoplanowy (tolerancja jak kubełka)"))
+        .clicked()
+    {
+        app.color_to_alpha_active();
+        ui.close();
+    }
+    if ui.button(tr("Usuń jednolite tło")).clicked() {
+        app.remove_uniform_background();
+        ui.close();
+    }
+    #[cfg(feature = "ai")]
+    if ui
+        .add_enabled(app.ai_rx.is_none(), egui::Button::new(tr("Usuń tło (AI)")))
+        .clicked()
+    {
+        app.start_ai_background(false);
+        ui.close();
+    }
+    ui.separator();
+    if ui
+        .add_enabled(count > 1, egui::Button::new(tr("Spłaszcz obraz")))
+        .clicked()
+    {
+        app.flatten_image();
+        ui.close();
+    }
+}
+
 /// Renderuje zawartość panelu warstw.
 pub fn render_layers_content(app: &mut DziwakApp, ui: &mut egui::Ui) {
     // Tryb mieszania aktywnej warstwy
@@ -214,6 +292,7 @@ pub fn render_layers_content(app: &mut DziwakApp, ui: &mut egui::Ui) {
                 if thumb_resp.clicked() {
                     layer_to_select = Some(idx);
                 }
+                let mut menu_resp = thumb_resp.clone();
 
                 if app.editing_layer_index == Some(idx) {
                     let text_resp = ui.text_edit_singleline(&mut app.editing_layer_name);
@@ -240,6 +319,7 @@ pub fn render_layers_content(app: &mut DziwakApp, ui: &mut egui::Ui) {
                             .sense(egui::Sense::click())
                             .truncate(),
                     );
+                    menu_resp = menu_resp.union(label_resp.clone());
                     if label_resp.clicked() {
                         layer_to_select = Some(idx);
                     }
@@ -247,6 +327,7 @@ pub fn render_layers_content(app: &mut DziwakApp, ui: &mut egui::Ui) {
                         start_rename = Some((idx, layer.name.clone()));
                     }
                 }
+                menu_resp
             });
 
             if is_active {
@@ -256,6 +337,16 @@ pub fn render_layers_content(app: &mut DziwakApp, ui: &mut egui::Ui) {
                     ui.visuals().selection.bg_fill.gamma_multiply(0.35),
                 );
             }
+
+            // Prawy przycisk: menu kontekstowe warstwy (jak w GIMP-ie)
+            let row_resp = row.inner;
+            if row_resp.secondary_clicked() {
+                layer_to_select = Some(idx);
+            }
+            row_resp.context_menu(|ui| {
+                app.active_layer_index = idx;
+                layer_context_menu(app, ui);
+            });
         }
 
         if let Some(idx) = layer_to_toggle_vis {

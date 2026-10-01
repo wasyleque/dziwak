@@ -30,6 +30,10 @@ fn main() -> Result<(), eframe::Error> {
             .with_title(initial_title)
             .with_inner_size([1024.0, 768.0])
             .with_min_inner_size([640.0, 480.0]),
+        // Bez vsync: pod Waylandem eglSwapBuffers z vsync czeka na sygnał klatki od kompozytora,
+        // którego zasłonięte/nieaktywne okno nie dostaje — główny wątek wisiał i Hyprland
+        // pokazywał „nie odpowiada”. Dziwak rysuje tylko przy zmianach, więc vsync nie jest potrzebny.
+        vsync: false,
         ..Default::default()
     };
 

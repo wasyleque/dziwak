@@ -119,3 +119,4 @@ Mikrozadania rdzenia (aider):
 - [x] M41 `core/src/brush.rs`: dab ołówka bez AA; `dodge_burn`, `smudge` na pikselu (czysta matematyka) + testy.
 - [x] M42 `brush.rs`: `clone_dab(layer, source, cx, cy, dx, dy, radius, hardness, opacity, sel)` (klonowanie) + testy. Ołówek (T5) = apply_dab z hardness 1.0 (maska bez AA).
 - [x] M43 `core/src/text.rs`: `rasterize_text(font_data, text, size_px) -> Option<TextMask>` (ab_glyph, wiele linii) + `stamp_mask(layer, &TextMask, x, y, color)` + testy.
+- [x] M45 `document.rs`: `merge_down(index)` + `alpha_mask(layer_index) -> Vec<u8>`; `fill.rs`: `color_to_alpha_mask(buf, w, h, color, tol)` = odwrotność color_select_mask (zachowaj = 0 dla koloru) + testy.

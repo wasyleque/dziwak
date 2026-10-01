@@ -243,6 +243,21 @@ pub fn color_select_mask(
         .collect()
 }
 
+/// Maska „kolor na przezroczystość”: 0 dla pikseli podobnych do `color` (tolerancja jak color_select_mask), 255 dla pozostałych.
+/// Użycie: mask_alpha(layer, &maska) usuwa wskazany kolor z warstwy.
+pub fn color_to_alpha_mask(
+    buf: &[Rgba8],
+    w: usize,
+    h: usize,
+    color: Rgba8,
+    tolerance: u8,
+) -> Vec<u8> {
+    color_select_mask(buf, w, h, color, tolerance)
+        .into_iter()
+        .map(|m| 255 - m)
+        .collect()
+}
+
 /// Maska tła połączonego z brzegami obrazu: suma (max) flood_fill_mask uruchomionych z 4 rogów z tolerancją `tolerance`.
 pub fn border_background_mask(buf: &[Rgba8], w: usize, h: usize, tolerance: u8) -> Vec<u8> {
     if w == 0 || h == 0 || buf.len() != w * h {
@@ -424,6 +439,18 @@ mod tests {
         // Test zła długość
         let mask = color_select_mask(&buf, 3, 1, Rgba8::new(255, 0, 0, 255), 0);
         assert_eq!(mask, vec![255, 0, 255]);
+    }
+
+    #[test]
+    fn test_color_to_alpha_mask() {
+        // Test dla color_to_alpha_mask
+        let buf = vec![
+            Rgba8::new(255, 255, 255, 255), // A
+            Rgba8::new(0, 0, 0, 255),       // B
+            Rgba8::new(255, 255, 255, 255), // A
+        ];
+        let mask = color_to_alpha_mask(&buf, 3, 1, Rgba8::new(255, 255, 255, 255), 0);
+        assert_eq!(mask, vec![0, 255, 0]);
     }
 
     #[test]

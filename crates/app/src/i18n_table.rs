@@ -510,4 +510,22 @@ pub static TABLE: &[(&str, &str, &str)] = &[
         "♥ Support the project (PayPal)...",
         "♥ Apoyar el proyecto (PayPal)...",
     ),
+    ("Scal w dół", "Merge Down", "Combinar hacia abajo"),
+    ("Dodaj kanał alfa", "Add Alpha Channel", "Añadir canal alfa"),
+    (
+        "Warstwy Dziwaka zawsze mają kanał alfa (RGBA)",
+        "Dziwak layers always have an alpha channel (RGBA)",
+        "Las capas de Dziwak siempre tienen canal alfa (RGBA)",
+    ),
+    (
+        "Alfa do zaznaczenia",
+        "Alpha to Selection",
+        "Alfa a selección",
+    ),
+    ("Kolor na przezroczystość", "Color to Alpha", "Color a alfa"),
+    (
+        "Usuwa kolor pierwszoplanowy (tolerancja jak kubełka)",
+        "Removes the foreground color (tolerance as Bucket Fill)",
+        "Elimina el color de primer plano (tolerancia como Relleno)",
+    ),
 ];

@@ -1388,6 +1388,70 @@ impl DziwakApp {
         }
     }
 
+    /// Scala aktywną warstwę z warstwą pod nią (menu kontekstowe warstwy).
+    pub fn merge_active_layer_down(&mut self) {
+        let idx = self.active_layer_index;
+        if idx == 0 || idx >= self.document.layer_count() {
+            return;
+        }
+        self.push_history();
+        if self.document.merge_down(idx) {
+            self.active_layer_index = idx - 1;
+            self.on_document_changed();
+            self.tile_renderer.mark_all_dirty();
+        }
+    }
+
+    /// Tworzy zaznaczenie z kanału alfa aktywnej warstwy (Alfa do zaznaczenia).
+    pub fn alpha_to_selection(&mut self) {
+        let mask = self.document.alpha_mask(self.active_layer_index);
+        if !mask.is_empty() {
+            self.selection
+                .combine_mask(&mask, dziwak_core::selection::SelectMode::Replace);
+        }
+    }
+
+    /// Zamienia kolor pierwszoplanowy na przezroczystość na aktywnej warstwie (tolerancja jak kubełka).
+    pub fn color_to_alpha_active(&mut self) {
+        if self.document.layers.is_empty() {
+            return;
+        }
+        let (w, h) = (self.document.width as usize, self.document.height as usize);
+        if w == 0 || h == 0 {
+            return;
+        }
+        if self.composite_buffer.len() != w * h {
+            self.composite_buffer.resize(w * h, Rgba8::TRANSPARENT);
+        }
+        let layer_idx = self.active_layer_index.min(self.document.layers.len() - 1);
+        Self::sample_layer_to_buffer(
+            &self.document.layers[layer_idx],
+            w,
+            h,
+            &mut self.composite_buffer,
+        );
+        let color = Rgba8::from_straight(
+            self.brush_color.r(),
+            self.brush_color.g(),
+            self.brush_color.b(),
+            255,
+        );
+        let keep = dziwak_core::fill::color_to_alpha_mask(
+            &self.composite_buffer,
+            w,
+            h,
+            color,
+            self.fill_tolerance,
+        );
+        self.push_history();
+        if let Some(rect) =
+            dziwak_core::fill::mask_alpha(&mut self.document.layers[layer_idx], &keep)
+        {
+            self.mark_rect_dirty(rect);
+            self.bump_layer_version(layer_idx);
+        }
+    }
+
     /// Usuwa jednolite tło aktywnej warstwy: piksele połączone z brzegami obrazu (tolerancja jak kubełka) stają się przezroczyste.
     pub fn remove_uniform_background(&mut self) {
         if self.document.layers.is_empty() {

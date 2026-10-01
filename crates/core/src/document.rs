@@ -200,6 +200,58 @@ impl Document {
         self.height = h;
     }
 
+    /// Scala warstwę `index` z warstwą pod nią (index - 1) zgodnie z jej kryciem, widocznością i trybem mieszania;
+    /// wynik zastępuje dolną warstwę, górna jest usuwana. Zwraca false, gdy scalenie jest niemożliwe (index == 0 lub poza zakresem).
+    pub fn merge_down(&mut self, index: usize) -> bool {
+        if index == 0 || index >= self.layers.len() {
+            return false;
+        }
+        let (w, h) = (self.width, self.height);
+        let mut tmp = Document::new(w, h);
+        let mut lower = self.layers[index - 1].clone();
+        let lower_opacity = lower.opacity;
+        let lower_visible = lower.visible;
+        lower.opacity = 1.0;
+        lower.visible = true;
+        lower.blend = BlendMode::Normal;
+        tmp.layers.push(lower);
+        tmp.layers.push(self.layers[index].clone());
+        let mut buf = vec![Rgba8::TRANSPARENT; (w as usize) * (h as usize)];
+        let _ = tmp.composite_rect(0, 0, w, h, &mut buf);
+        let mut merged = self.layers[index - 1].clone();
+        merged.pixels = crate::layer::TiledLayer::new(w, h);
+        for y in 0..h {
+            for x in 0..w {
+                let px = buf[(y * w + x) as usize];
+                if px.a() > 0 {
+                    let _ = merged.pixels.set_pixel(x, y, px);
+                }
+            }
+        }
+        merged.opacity = lower_opacity;
+        merged.visible = lower_visible;
+        self.layers[index - 1] = merged;
+        self.layers.remove(index);
+        true
+    }
+
+    /// Maska (w*h) z kanału alfa warstwy `index` — do polecenia „Alfa do zaznaczenia”. Pusta gdy indeks poza zakresem.
+    pub fn alpha_mask(&self, index: usize) -> Vec<u8> {
+        let Some(layer) = self.layers.get(index) else {
+            return Vec::new();
+        };
+        let (w, h) = (self.width, self.height);
+        let mut mask = vec![0u8; (w as usize) * (h as usize)];
+        for y in 0..h {
+            for x in 0..w {
+                if let Some(px) = layer.pixels.get_pixel(x, y) {
+                    mask[(y * w + x) as usize] = px.a();
+                }
+            }
+        }
+        mask
+    }
+
     /// Skaluje cały dokument (wszystkie warstwy) do wymiarów (new_w, new_h) z interpolacją dwuliniową.
     pub fn scale(&mut self, new_w: u32, new_h: u32) {
         if new_w == 0 || new_h == 0 || self.width == 0 || self.height == 0 {
@@ -714,5 +766,26 @@ mod tests {
         // Piksel powinien być przeskalowany w okolice (4..5, 8..9)
         let px0 = doc.layers[0].get_pixel(4, 8).unwrap();
         assert!(px0.a() > 0);
+    }
+
+    #[test]
+    fn test_merge_down_and_alpha_mask() {
+        let mut doc = Document::with_default_layer(4, 4, "d");
+        doc.add_layer(Layer::new("g", 4, 4));
+        let red = Rgba8::new(255, 0, 0, 255);
+        doc.layers[1].set_pixel(1, 1, red).unwrap();
+
+        // Test merge_down
+        assert_eq!(doc.layer_count(), 2);
+        assert!(doc.merge_down(1));
+        assert_eq!(doc.layer_count(), 1);
+        assert_eq!(doc.layers[0].get_pixel(1, 1), Some(red));
+
+        // Test merge_down on invalid index
+        assert!(!doc.merge_down(0));
+
+        // Test alpha_mask
+        let mask = doc.alpha_mask(0);
+        assert_eq!(mask[4 + 1], 255);
     }
 }
