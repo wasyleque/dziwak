@@ -611,6 +611,21 @@ pub fn find_font_path(family: &str) -> Option<PathBuf> {
             }
         }
     }
+    // Windows: C:\\Windows\\Fonts (nazwa rodziny bez spacji, potem Segoe UI / Arial)
+    let windir = std::env::var_os("WINDIR").map(PathBuf::from);
+    if let Some(fonts) = windir.map(|w| w.join("Fonts")) {
+        let base = family.replace(' ', "").to_lowercase();
+        for name in [
+            format!("{base}.ttf"),
+            "segoeui.ttf".into(),
+            "arial.ttf".into(),
+        ] {
+            let p = fonts.join(name);
+            if p.exists() {
+                return Some(p);
+            }
+        }
+    }
     for fallback in [
         "/usr/share/fonts/noto/NotoSans-Regular.ttf",
         "/usr/share/fonts/TTF/DejaVuSans.ttf",

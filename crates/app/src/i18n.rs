@@ -99,6 +99,7 @@ pub fn system_lang() -> Lang {
 fn settings_path() -> Option<PathBuf> {
     std::env::var_os("XDG_CONFIG_HOME")
         .map(PathBuf::from)
+        .or_else(|| std::env::var_os("APPDATA").map(PathBuf::from))
         .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))
         .map(|d| d.join("dziwak/settings"))
 }

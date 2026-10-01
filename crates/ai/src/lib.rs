@@ -35,8 +35,15 @@ pub fn default_model_path() -> Option<PathBuf> {
         .split(':')
         .filter(|d| !d.is_empty())
         .map(|d| PathBuf::from(d).join(rel));
+    // Obok programu (wersja przenośna, np. Windows z pendrive'a): <katalog exe>/models/u2netp.onnx
+    let portable = std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(|d| d.join("models/u2netp.onnx")));
+    let appdata = std::env::var_os("APPDATA").map(|d| PathBuf::from(d).join(rel));
     user.clone()
         .into_iter()
+        .chain(portable)
+        .chain(appdata)
         .chain(system)
         .find(|p| p.exists())
         .or(user)

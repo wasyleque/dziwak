@@ -1,3 +1,6 @@
+// Na Windowsie bez okna konsoli.
+#![cfg_attr(windows, windows_subsystem = "windows")]
+
 mod i18n;
 mod i18n_table;
 mod state;
