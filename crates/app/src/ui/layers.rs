@@ -196,7 +196,7 @@ pub fn render_layers_content(app: &mut DziwakApp, ui: &mut egui::Ui) {
             if let Some(layer) = app.document.layers.get_mut(app.active_layer_index) {
                 layer.blend = chosen;
             }
-            app.tile_renderer.mark_all_dirty();
+            app.mark_document_dirty();
         }
         ui.separator();
     }
@@ -226,7 +226,7 @@ pub fn render_layers_content(app: &mut DziwakApp, ui: &mut egui::Ui) {
                 if let Some(layer) = app.document.layers.get_mut(app.active_layer_index) {
                     layer.opacity = (opacity_pct / 100.0).clamp(0.0, 1.0);
                 }
-                app.tile_renderer.mark_all_dirty();
+                app.mark_document_dirty();
             }
             if resp.drag_stopped() {
                 app.is_dragging_opacity = false;

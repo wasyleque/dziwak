@@ -975,6 +975,16 @@ impl DziwakApp {
         }
     }
 
+    /// Przerysowuje cały dokument i unieważnia miniatury wszystkich warstw
+    /// (po zmianach struktury stosu miniatury indeksowane pozycją byłyby nieaktualne).
+    pub fn mark_document_dirty(&mut self) {
+        self.tile_renderer.mark_all_dirty();
+        self.ensure_layer_caches();
+        for v in &mut self.layer_versions {
+            *v = v.wrapping_add(1);
+        }
+    }
+
     /// Upewnia się, że bufory wersji i miniatur mają właściwy rozmiar odpowiadający liczbie warstw.
     pub fn ensure_layer_caches(&mut self) {
         let count = self.document.layer_count();
@@ -1398,7 +1408,7 @@ impl DziwakApp {
         if self.document.merge_down(idx) {
             self.active_layer_index = idx - 1;
             self.on_document_changed();
-            self.tile_renderer.mark_all_dirty();
+            self.mark_document_dirty();
         }
     }
 
@@ -1867,7 +1877,7 @@ impl DziwakApp {
         }
 
         self.document.layers[layer_idx].pixels = new_layer_pixels;
-        self.tile_renderer.mark_all_dirty();
+        self.mark_document_dirty();
         self.bump_layer_version(layer_idx);
     }
 
@@ -2211,7 +2221,7 @@ impl DziwakApp {
         self.document.add_layer(layer);
         self.active_layer_index = self.document.layer_count().saturating_sub(1);
         self.bump_layer_version(self.active_layer_index);
-        self.tile_renderer.mark_all_dirty();
+        self.mark_document_dirty();
     }
 
     /// Anuluje wstawianie tekstu i zamyka okno dialogowe (T10).
@@ -2262,8 +2272,9 @@ impl DziwakApp {
                 dialog.original_layer.pixels.clone();
         }
 
-        self.tile_renderer.mark_all_dirty();
-        self.bump_layer_version(dialog.target_layer_idx);
+        let target = dialog.target_layer_idx;
+        self.mark_document_dirty();
+        self.bump_layer_version(target);
     }
 
     /// Anuluje działanie okna transformacji: przywraca stan warstwy i zamyka dialog.
@@ -2271,7 +2282,7 @@ impl DziwakApp {
         if let Some(dialog) = self.transform_dialog.take() {
             if dialog.target_layer_idx < self.document.layers.len() {
                 self.document.layers[dialog.target_layer_idx] = dialog.original_layer;
-                self.tile_renderer.mark_all_dirty();
+                self.mark_document_dirty();
                 self.bump_layer_version(dialog.target_layer_idx);
             }
         }
@@ -2290,7 +2301,7 @@ impl DziwakApp {
         self.document.layers[dialog.target_layer_idx] = dialog.original_layer;
         self.push_history();
         self.document.layers[dialog.target_layer_idx].pixels = new_pixels;
-        self.tile_renderer.mark_all_dirty();
+        self.mark_document_dirty();
         self.bump_layer_version(dialog.target_layer_idx);
     }
 
@@ -2342,7 +2353,7 @@ impl DziwakApp {
         {
             self.tile_renderer = TileRenderer::new(w, h);
         }
-        self.tile_renderer.mark_all_dirty();
+        self.mark_document_dirty();
     }
 
     /// Otwiera okno dialogowe "Skaluj obraz..." (T7).
@@ -2447,7 +2458,7 @@ impl DziwakApp {
         };
         let _ = self.document.insert_layer(insert_idx, new_layer);
         self.active_layer_index = insert_idx;
-        self.tile_renderer.mark_all_dirty();
+        self.mark_document_dirty();
     }
 
     /// Duplikuje aktywną warstwę (współdzieląc kafle CoW) i wstawia ją powyżej.
@@ -2462,7 +2473,7 @@ impl DziwakApp {
         let insert_idx = active_idx + 1;
         let _ = self.document.insert_layer(insert_idx, dup_layer);
         self.active_layer_index = insert_idx;
-        self.tile_renderer.mark_all_dirty();
+        self.mark_document_dirty();
     }
 
     /// Usuwa aktywną warstwę (jeśli w dokumencie znajduje się więcej niż jedna warstwa).
@@ -2474,7 +2485,7 @@ impl DziwakApp {
         let remove_idx = self.active_layer_index.min(self.document.layer_count() - 1);
         self.document.remove_layer(remove_idx);
         self.active_layer_index = remove_idx.min(self.document.layer_count().saturating_sub(1));
-        self.tile_renderer.mark_all_dirty();
+        self.mark_document_dirty();
     }
 
     /// Spłaszcza wszystkie warstwy dokumentu do pojedynczej warstwy 'Spłaszczony' (etap G1).
@@ -2497,7 +2508,7 @@ impl DziwakApp {
         self.document.layers = vec![new_layer];
         self.active_layer_index = 0;
         self.on_document_changed();
-        self.tile_renderer.mark_all_dirty();
+        self.mark_document_dirty();
     }
 
     /// Przesuwa aktywną warstwę w górę stosu (w stronę wyższego indeksu / wierzchu).
@@ -2508,7 +2519,7 @@ impl DziwakApp {
                 .layers
                 .swap(self.active_layer_index, self.active_layer_index + 1);
             self.active_layer_index += 1;
-            self.tile_renderer.mark_all_dirty();
+            self.mark_document_dirty();
         }
     }
 
@@ -2520,7 +2531,7 @@ impl DziwakApp {
                 .layers
                 .swap(self.active_layer_index, self.active_layer_index - 1);
             self.active_layer_index -= 1;
-            self.tile_renderer.mark_all_dirty();
+            self.mark_document_dirty();
         }
     }
 
@@ -2529,7 +2540,7 @@ impl DziwakApp {
         if idx < self.document.layers.len() {
             self.push_history();
             self.document.layers[idx].visible = !self.document.layers[idx].visible;
-            self.tile_renderer.mark_all_dirty();
+            self.mark_document_dirty();
         }
     }
 
@@ -2549,7 +2560,7 @@ impl DziwakApp {
         self.push_history();
         if let Some(layer) = self.document.layers.get_mut(idx) {
             layer.name = trimmed.to_string();
-            self.tile_renderer.mark_all_dirty();
+            self.mark_document_dirty();
         }
     }
 
@@ -4297,5 +4308,21 @@ mod tests {
         assert!((dy - 40.0).abs() < 1e-3);
         assert!((len - 50.0).abs() < 1e-3);
         assert!((angle - (-40.0_f32).atan2(30.0).to_degrees()).abs() < 1e-3);
+    }
+
+    #[test]
+    fn test_moving_layer_invalidates_thumbnails() {
+        let mut app = DziwakApp::new();
+        assert!(app.document.layer_count() >= 2);
+        app.active_layer_index = 0;
+        app.ensure_layer_caches();
+        let before = app.layer_versions.clone();
+        app.move_active_layer_up();
+        assert_eq!(app.active_layer_index, 1);
+        assert_ne!(app.layer_versions[0], before[0]);
+        assert_ne!(app.layer_versions[1], before[1]);
+        let mid = app.layer_versions.clone();
+        app.move_active_layer_down();
+        assert_ne!(app.layer_versions[0], mid[0]);
     }
 }
