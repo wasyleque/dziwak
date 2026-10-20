@@ -39,7 +39,10 @@ pub use layer::{Layer, OutOfBoundsError, TiledLayer};
 pub use pixel::Rgba8;
 pub use selection::Selection;
 pub use stroke::interpolate_stroke;
-pub use text::{rasterize_text, stamp_mask, TextMask};
+pub use text::{
+    caret_positions, font_line_height, rasterize_text, rasterize_text_with_options, stamp_mask,
+    TextAlign, TextMask,
+};
 pub use tile::{
     create_empty_tile, create_filled_tile, is_tile_empty, Tile, TILE_PIXELS, TILE_SIZE,
 };

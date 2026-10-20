@@ -539,4 +539,42 @@ pub static TABLE: &[(&str, &str, &str)] = &[
         "Fill with BG Color",
         "Rellenar con color de fondo",
     ),
+    (
+        "Zapisać zmiany przed zamknięciem?",
+        "Save changes before closing?",
+        "¿Guardar los cambios antes de cerrar?",
+    ),
+    ("Zapisz", "Save", "Guardar"),
+    ("Nie zapisuj", "Don't Save", "No guardar"),
+    (
+        "Kliknij lub przeciągnij na płótnie, aby utworzyć ramkę tekstu.\nCtrl+Enter: zatwierdź, Esc: anuluj.",
+        "Click or drag on the canvas to create a text box.\nCtrl+Enter: apply, Esc: cancel.",
+        "Haz clic o arrastra en el lienzo para crear un cuadro de texto.\nCtrl+Enter: aplicar, Esc: cancelar.",
+    ),
+    ("Wyrównanie:", "Alignment:", "Alineación:"),
+    ("Lewo", "Left", "Izquierda"),
+    ("Środek", "Center", "Centro"),
+    ("Prawo", "Right", "Derecha"),
+    ("Odstęp linii:", "Line spacing:", "Interlineado:"),
+    (
+        "Zatwierdź (Ctrl+Enter)",
+        "Apply (Ctrl+Enter)",
+        "Aplicar (Ctrl+Enter)",
+    ),
+    ("Nowy (Ctrl+N)", "New (Ctrl+N)", "Nuevo (Ctrl+N)"),
+    (
+        "Zamknij zakładkę (Ctrl+W)",
+        "Close Tab (Ctrl+W)",
+        "Cerrar pestaña (Ctrl+W)",
+    ),
+    (
+        "Nowa zakładka (Ctrl+N)",
+        "New Tab (Ctrl+N)",
+        "Nueva pestaña (Ctrl+N)",
+    ),
+    (
+        "Nie zapisuj żadnego",
+        "Don't Save Any",
+        "No guardar ninguno",
+    ),
 ];

@@ -41,7 +41,7 @@ pub fn render_tool_options(app: &mut DziwakApp, ui: &mut egui::Ui) {
             ui.add(egui::Slider::new(&mut app.brush_opacity, 0.0..=1.0));
             ui.separator();
 
-            if let Some((sx, sy)) = app.clone_source {
+            if let Some((sx, sy)) = app.doc.clone_source {
                 ui.label(format!("{}: {:.0}×{:.0} px", tr("Źródło"), sx, sy));
             } else {
                 ui.label(
@@ -147,20 +147,144 @@ pub fn render_tool_options(app: &mut DziwakApp, ui: &mut egui::Ui) {
             ui.label(tr("Narzędzie Tekst:"));
             ui.label(
                 egui::RichText::new(tr(
-                    "Kliknij na płótnie, aby umieścić tekst, lub otwórz okno edycji tekstu.",
+                    "Kliknij lub przeciągnij na płótnie, aby utworzyć ramkę tekstu.\nCtrl+Enter: zatwierdź, Esc: anuluj.",
                 ))
                 .small()
                 .color(egui::Color32::GRAY),
             );
             ui.separator();
 
-            if ui.button(tr("Otwórz okno tekstu...")).clicked() && app.text_dialog.is_none() {
-                let (x, y) = if let Some(pos) = app.cursor_canvas_pos {
-                    (pos.x.round() as i32, pos.y.round() as i32)
-                } else {
-                    (50, 50)
-                };
-                app.open_text_dialog(x, y);
+            let mut changed = false;
+
+            ui.label(tr("Rodzina czcionki:"));
+            let families = crate::state::system_font_families();
+            if families.is_empty() {
+                if ui.text_edit_singleline(&mut app.text_font_family).changed() {
+                    changed = true;
+                }
+            } else {
+                let prev_family = app.text_font_family.clone();
+                egui::ComboBox::from_id_salt("text_font_family_combo")
+                    .selected_text(&app.text_font_family)
+                    .width(150.0)
+                    .show_ui(ui, |ui| {
+                        for fam in families {
+                            ui.selectable_value(&mut app.text_font_family, fam.clone(), fam);
+                        }
+                    });
+                if app.text_font_family != prev_family {
+                    changed = true;
+                }
+            }
+            ui.separator();
+
+            ui.horizontal(|ui| {
+                ui.label(tr("Rozmiar:"));
+                if ui
+                    .add(
+                        egui::DragValue::new(&mut app.text_font_size)
+                            .range(4.0_f32..=500.0_f32)
+                            .speed(1.0)
+                            .suffix(" px"),
+                    )
+                    .changed()
+                {
+                    changed = true;
+                }
+            });
+            ui.separator();
+
+            ui.horizontal(|ui| {
+                ui.label(tr("Kolor:"));
+                let (swatch_rect, swatch_resp) =
+                    ui.allocate_exact_size(egui::vec2(22.0, 18.0), egui::Sense::click());
+                ui.painter().rect_filled(swatch_rect, 2.0, app.brush_color);
+                ui.painter().rect_stroke(
+                    swatch_rect,
+                    2.0,
+                    egui::Stroke::new(1.0_f32, egui::Color32::WHITE),
+                    egui::StrokeKind::Inside,
+                );
+                if swatch_resp.clicked() {
+                    app.color_picker_target = match app.color_picker_target {
+                        Some(crate::state::ColorPickerTarget::Foreground) => None,
+                        _ => Some(crate::state::ColorPickerTarget::Foreground),
+                    };
+                }
+                swatch_resp.on_hover_text(tr("Kolor pierwszoplanowy (kliknij, aby edytować)"));
+            });
+            ui.separator();
+
+            ui.label(tr("Wyrównanie:"));
+            let prev_align = app.text_align;
+            ui.horizontal(|ui| {
+                ui.selectable_value(
+                    &mut app.text_align,
+                    dziwak_core::text::TextAlign::Left,
+                    tr("Lewo"),
+                );
+                ui.selectable_value(
+                    &mut app.text_align,
+                    dziwak_core::text::TextAlign::Center,
+                    tr("Środek"),
+                );
+                ui.selectable_value(
+                    &mut app.text_align,
+                    dziwak_core::text::TextAlign::Right,
+                    tr("Prawo"),
+                );
+            });
+            if app.text_align != prev_align {
+                changed = true;
+            }
+            ui.separator();
+
+            ui.horizontal(|ui| {
+                ui.label(tr("Odstęp linii:"));
+                if ui
+                    .add(
+                        egui::DragValue::new(&mut app.text_line_spacing)
+                            .range(-50.0_f32..=200.0_f32)
+                            .speed(0.5)
+                            .suffix(" px"),
+                    )
+                    .changed()
+                {
+                    changed = true;
+                }
+            });
+
+            if changed {
+                app.mark_text_preview_dirty();
+            }
+
+            if let Some(err) = app
+                .doc
+                .text_editor
+                .as_ref()
+                .and_then(|e| e.error.as_deref())
+            {
+                ui.colored_label(egui::Color32::RED, err);
+            }
+
+            if app.doc.text_editor.is_some() {
+                ui.add_space(4.0);
+                ui.horizontal(|ui| {
+                    let can_commit = app
+                        .doc
+                        .text_editor
+                        .as_ref()
+                        .is_some_and(|e| !e.text.trim().is_empty());
+                    if ui
+                        .add_enabled(can_commit, egui::Button::new(tr("Zatwierdź (Ctrl+Enter)")))
+                        .clicked()
+                    {
+                        app.commit_text();
+                    }
+                    if ui.button(tr("Anuluj (Esc)")).clicked() {
+                        app.cancel_text();
+                    }
+                });
             }
             ui.separator();
         }
@@ -238,15 +362,15 @@ pub fn render_tool_options(app: &mut DziwakApp, ui: &mut egui::Ui) {
                 .small()
                 .color(egui::Color32::GRAY),
             );
-            if !app.free_select_points.is_empty() {
+            if !app.doc.free_select_points.is_empty() {
                 ui.label(format!(
                     "{}: {}",
                     tr("Liczba punktów:"),
-                    app.free_select_points.len()
+                    app.doc.free_select_points.len()
                 ));
             }
             ui.horizontal(|ui| {
-                let can_close = app.free_select_points.len() >= 3;
+                let can_close = app.doc.free_select_points.len() >= 3;
                 if ui
                     .add_enabled(can_close, egui::Button::new(tr("Zamknij (Enter)")))
                     .clicked()
@@ -255,7 +379,7 @@ pub fn render_tool_options(app: &mut DziwakApp, ui: &mut egui::Ui) {
                 }
                 if ui
                     .add_enabled(
-                        !app.free_select_points.is_empty(),
+                        !app.doc.free_select_points.is_empty(),
                         egui::Button::new(tr("Anuluj (Esc)")),
                     )
                     .clicked()
@@ -285,11 +409,11 @@ pub fn render_tool_options(app: &mut DziwakApp, ui: &mut egui::Ui) {
                 .small()
                 .color(egui::Color32::GRAY),
             );
-            if let Some(r) = app.crop_rect {
+            if let Some(r) = app.doc.crop_rect {
                 ui.label(format!("{}×{} px (+{}, +{})", r.width, r.height, r.x, r.y));
             }
             ui.horizontal(|ui| {
-                let has_crop = app.crop_rect.is_some() || app.crop_drag_start.is_some();
+                let has_crop = app.doc.crop_rect.is_some() || app.doc.crop_drag_start.is_some();
                 if ui
                     .add_enabled(has_crop, egui::Button::new(tr("Przytnij (Enter)")))
                     .clicked()
@@ -298,7 +422,7 @@ pub fn render_tool_options(app: &mut DziwakApp, ui: &mut egui::Ui) {
                 }
                 if ui
                     .add_enabled(
-                        app.crop_rect.is_some(),
+                        app.doc.crop_rect.is_some(),
                         egui::Button::new(tr("Anuluj (Esc)")),
                     )
                     .clicked()
@@ -328,7 +452,9 @@ pub fn render_tool_options(app: &mut DziwakApp, ui: &mut egui::Ui) {
                 .small()
                 .color(egui::Color32::GRAY),
             );
-            if app.transform_dialog.is_none() && ui.button(tr("Otwórz okno obrotu...")).clicked() {
+            if app.doc.transform_dialog.is_none()
+                && ui.button(tr("Otwórz okno obrotu...")).clicked()
+            {
                 app.open_transform_dialog(crate::state::LayerTransformKind::Rotate {
                     angle_deg: 0.0,
                 });
@@ -344,10 +470,10 @@ pub fn render_tool_options(app: &mut DziwakApp, ui: &mut egui::Ui) {
                 .small()
                 .color(egui::Color32::GRAY),
             );
-            if app.transform_dialog.is_none()
+            if app.doc.transform_dialog.is_none()
                 && ui.button(tr("Otwórz okno skalowania...")).clicked()
             {
-                let (w, h) = (app.document.width, app.document.height);
+                let (w, h) = (app.doc.document.width, app.doc.document.height);
                 app.open_transform_dialog(crate::state::LayerTransformKind::Scale {
                     width: w,
                     height: h,
@@ -365,7 +491,8 @@ pub fn render_tool_options(app: &mut DziwakApp, ui: &mut egui::Ui) {
                     .small()
                     .color(egui::Color32::GRAY),
             );
-            if app.transform_dialog.is_none() && ui.button(tr("Otwórz okno odbicia...")).clicked()
+            if app.doc.transform_dialog.is_none()
+                && ui.button(tr("Otwórz okno odbicia...")).clicked()
             {
                 app.open_transform_dialog(crate::state::LayerTransformKind::Flip {
                     horizontal: true,
@@ -386,24 +513,27 @@ pub fn render_tool_options(app: &mut DziwakApp, ui: &mut egui::Ui) {
             ui.horizontal(|ui| {
                 if ui.button(tr("Powiększ (+)")).clicked() {
                     let center = egui::pos2(
-                        app.document.width as f32 * 0.5,
-                        app.document.height as f32 * 0.5,
+                        app.doc.document.width as f32 * 0.5,
+                        app.doc.document.height as f32 * 0.5,
                     );
-                    let screen_center = app.transform.canvas_to_screen(center);
-                    app.transform.zoom_around(screen_center, 1.5, 0.05, 64.0);
-                    app.tile_renderer.set_zoom(app.transform.zoom);
-                    app.auto_fit = false;
+                    let screen_center = app.doc.transform.canvas_to_screen(center);
+                    app.doc
+                        .transform
+                        .zoom_around(screen_center, 1.5, 0.05, 64.0);
+                    app.doc.tile_renderer.set_zoom(app.doc.transform.zoom);
+                    app.doc.auto_fit = false;
                 }
                 if ui.button(tr("Pomniejsz (-)")).clicked() {
                     let center = egui::pos2(
-                        app.document.width as f32 * 0.5,
-                        app.document.height as f32 * 0.5,
+                        app.doc.document.width as f32 * 0.5,
+                        app.doc.document.height as f32 * 0.5,
                     );
-                    let screen_center = app.transform.canvas_to_screen(center);
-                    app.transform
+                    let screen_center = app.doc.transform.canvas_to_screen(center);
+                    app.doc
+                        .transform
                         .zoom_around(screen_center, 1.0 / 1.5, 0.05, 64.0);
-                    app.tile_renderer.set_zoom(app.transform.zoom);
-                    app.auto_fit = false;
+                    app.doc.tile_renderer.set_zoom(app.doc.transform.zoom);
+                    app.doc.auto_fit = false;
                 }
             });
             ui.separator();
@@ -423,27 +553,32 @@ pub fn render_tool_options(app: &mut DziwakApp, ui: &mut egui::Ui) {
                 ui.label(format!("{}: {:.1}°", tr("Kąt"), angle));
                 ui.label(format!("ΔX: {:.1} px, ΔY: {:.1} px", dx, dy));
                 if ui.button(tr("Wyczyść pomiar")).clicked() {
-                    app.measure_start = None;
-                    app.measure_end = None;
+                    app.doc.measure_start = None;
+                    app.doc.measure_end = None;
                 }
             }
             ui.separator();
         }
     }
 
-    if app.document.layer_count() > 1 {
+    if app.doc.document.layer_count() > 1 {
         ui.label(tr("Aktywna warstwa:"));
         let current_layer_name = app
+            .doc
             .document
-            .layer(app.active_layer_index.min(app.document.layer_count() - 1))
+            .layer(
+                app.doc
+                    .active_layer_index
+                    .min(app.doc.document.layer_count() - 1),
+            )
             .map(|l| l.name.as_str())
             .unwrap_or("—");
         egui::ComboBox::from_id_salt("active_layer_combo")
             .selected_text(current_layer_name)
             .width(150.0)
             .show_ui(ui, |ui| {
-                for (idx, layer) in app.document.layers.iter().enumerate().rev() {
-                    ui.selectable_value(&mut app.active_layer_index, idx, &layer.name);
+                for (idx, layer) in app.doc.document.layers.iter().enumerate().rev() {
+                    ui.selectable_value(&mut app.doc.active_layer_index, idx, &layer.name);
                 }
             });
     }

@@ -12,24 +12,38 @@ pub fn render_menu_bar(
         egui::MenuBar::new().ui(ui, |ui| {
             // 1. Plik
             ui.menu_button(tr("Plik"), |ui| {
+                if ui.button(tr("Nowy (Ctrl+N)")).clicked() {
+                    app.new_tab();
+                    ui.close();
+                }
                 if ui.button(tr("Otwórz... (Ctrl+O)")).clicked() {
                     app.open_file_dialog();
                     ui.close();
                 }
                 if ui.button(tr("Zapisz jako... (Ctrl+Shift+S)")).clicked() {
+                    app.close_after_save = false;
                     app.save_file_dialog();
                     ui.close();
                 }
                 ui.separator();
-                if ui.button(tr("Zakończ")).clicked() {
+                if ui.button(tr("Zamknij zakładkę (Ctrl+W)")).clicked() {
+                    let active_id = app.doc.id;
+                    app.request_close_tab(active_id);
+                    ui.close();
+                }
+                if ui
+                    .add(egui::Button::new(tr("Zakończ")).shortcut_text("Ctrl+Q"))
+                    .clicked()
+                {
                     ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                    ui.close();
                 }
             });
 
             // 2. Edycja
             ui.menu_button(tr("Edycja"), |ui| {
                 let undo_btn = ui.add_enabled(
-                    app.history.can_undo(),
+                    app.doc.history.can_undo(),
                     egui::Button::new(tr("Cofnij (Ctrl+Z)")),
                 );
                 if undo_btn.clicked() {
@@ -40,7 +54,7 @@ pub fn render_menu_bar(
                 }
 
                 let redo_btn = ui.add_enabled(
-                    app.history.can_redo(),
+                    app.doc.history.can_redo(),
                     egui::Button::new(tr("Ponów (Ctrl+Shift+Z / Ctrl+Y)")),
                 );
                 if redo_btn.clicked() {
@@ -50,7 +64,7 @@ pub fn render_menu_bar(
                     ui.close();
                 }
                 ui.separator();
-                let has_layers = !app.document.layers.is_empty();
+                let has_layers = !app.doc.document.layers.is_empty();
                 if ui
                     .add_enabled(
                         has_layers,
@@ -98,26 +112,30 @@ pub fn render_menu_bar(
             // 3. Zaznaczenie
             ui.menu_button(tr("Zaznaczenie"), |ui| {
                 if ui.button(tr("Zaznacz wszystko (Ctrl+A)")).clicked() {
-                    app.selection
-                        .select_rect(0, 0, app.document.width, app.document.height);
-                    app.selection_shape = SelectionShape::Rect;
-                    app.selection_drag_start = None;
-                    app.selection_drag_current = None;
+                    app.doc.selection.select_rect(
+                        0,
+                        0,
+                        app.doc.document.width,
+                        app.doc.document.height,
+                    );
+                    app.doc.selection_shape = SelectionShape::Rect;
+                    app.doc.selection_drag_start = None;
+                    app.doc.selection_drag_current = None;
                     ui.close();
                 }
                 let deselect_btn = ui.add_enabled(
-                    app.selection.has_selection,
+                    app.doc.selection.has_selection,
                     egui::Button::new(tr("Odznacz (Ctrl+Shift+A)")),
                 );
                 if deselect_btn.clicked() {
-                    app.selection.clear();
-                    app.selection_drag_start = None;
-                    app.selection_drag_current = None;
+                    app.doc.selection.clear();
+                    app.doc.selection_drag_start = None;
+                    app.doc.selection_drag_current = None;
                     ui.close();
                 }
                 if ui.button(tr("Odwróć zaznaczenie (Ctrl+I)")).clicked() {
-                    app.selection.invert();
-                    app.selection_shape = SelectionShape::Rect;
+                    app.doc.selection.invert();
+                    app.doc.selection_shape = SelectionShape::Rect;
                     ui.close();
                 }
                 if ui.button(tr("Według koloru (Shift+O)")).clicked() {
@@ -129,14 +147,14 @@ pub fn render_menu_bar(
                     ui.separator();
                     if ui
                         .add_enabled(
-                            app.ai_rx.is_none(),
+                            app.doc.ai_rx.is_none(),
                             egui::Button::new(tr("Pierwszy plan (AI)")),
                         )
                         .on_hover_text(tr("Zaznacza główny obiekt modelem U²-Net-p na CPU"))
                         .clicked()
                     {
                         app.start_ai_background(true);
-                        app.selection_shape = SelectionShape::Rect;
+                        app.doc.selection_shape = SelectionShape::Rect;
                         ui.close();
                     }
                 }
@@ -145,18 +163,18 @@ pub fn render_menu_bar(
             // 4. Widok (Powiększ, Pomniejsz, 1:1, Dopasuj)
             ui.menu_button(tr("Widok"), |ui| {
                 if ui.button(tr("Powiększ (+)")).clicked() {
-                    app.transform.zoom = (app.transform.zoom * 1.25).clamp(0.05, 64.0);
-                    app.tile_renderer.set_zoom(app.transform.zoom);
+                    app.doc.transform.zoom = (app.doc.transform.zoom * 1.25).clamp(0.05, 64.0);
+                    app.doc.tile_renderer.set_zoom(app.doc.transform.zoom);
                     ui.close();
                 }
                 if ui.button(tr("Pomniejsz (-)")).clicked() {
-                    app.transform.zoom = (app.transform.zoom / 1.25).clamp(0.05, 64.0);
-                    app.tile_renderer.set_zoom(app.transform.zoom);
+                    app.doc.transform.zoom = (app.doc.transform.zoom / 1.25).clamp(0.05, 64.0);
+                    app.doc.tile_renderer.set_zoom(app.doc.transform.zoom);
                     ui.close();
                 }
                 if ui.button(tr("Rzeczywisty rozmiar (1:1)")).clicked() {
-                    app.transform.zoom = 1.0;
-                    app.tile_renderer.set_zoom(1.0);
+                    app.doc.transform.zoom = 1.0;
+                    app.doc.tile_renderer.set_zoom(1.0);
                     ui.close();
                 }
                 if ui
@@ -170,7 +188,7 @@ pub fn render_menu_bar(
                     .add(egui::Button::new(tr("Wyśrodkuj obraz")).shortcut_text("Shift+J"))
                     .clicked()
                 {
-                    app.center_requested = true;
+                    app.doc.center_requested = true;
                     ui.close();
                 }
                 ui.separator();
@@ -189,7 +207,7 @@ pub fn render_menu_bar(
                 }
                 ui.separator();
                 let can_crop_to_sel =
-                    app.selection.has_selection && app.selection.bounds().is_some();
+                    app.doc.selection.has_selection && app.doc.selection.bounds().is_some();
                 if ui
                     .add_enabled(
                         can_crop_to_sel,
@@ -223,7 +241,7 @@ pub fn render_menu_bar(
                     ui.close();
                 }
                 ui.separator();
-                let can_flatten = app.document.layer_count() > 1;
+                let can_flatten = app.doc.document.layer_count() > 1;
                 if ui
                     .add_enabled(can_flatten, egui::Button::new(tr("Spłaszcz obraz")))
                     .clicked()
@@ -244,7 +262,7 @@ pub fn render_menu_bar(
                     ui.close();
                 }
                 ui.separator();
-                let has_layers = !app.document.layers.is_empty();
+                let has_layers = !app.doc.document.layers.is_empty();
                 if ui
                     .add_enabled(has_layers, egui::Button::new(tr("Obróć warstwę...")))
                     .clicked()
@@ -258,7 +276,7 @@ pub fn render_menu_bar(
                     .add_enabled(has_layers, egui::Button::new(tr("Skaluj warstwę...")))
                     .clicked()
                 {
-                    let (w, h) = (app.document.width, app.document.height);
+                    let (w, h) = (app.doc.document.width, app.doc.document.height);
                     app.open_transform_dialog(crate::state::LayerTransformKind::Scale {
                         width: w,
                         height: h,
@@ -290,14 +308,17 @@ pub fn render_menu_bar(
                 }
                 #[cfg(feature = "ai")]
                 if ui
-                    .add_enabled(app.ai_rx.is_none(), egui::Button::new(tr("Usuń tło (AI)")))
+                    .add_enabled(
+                        app.doc.ai_rx.is_none(),
+                        egui::Button::new(tr("Usuń tło (AI)")),
+                    )
                     .on_hover_text(tr("Model U²-Net-p na CPU, ok. 1–2 s"))
                     .clicked()
                 {
                     app.start_ai_background(false);
                     ui.close();
                 }
-                let can_remove = app.document.layer_count() > 1;
+                let can_remove = app.doc.document.layer_count() > 1;
                 if ui
                     .add_enabled(can_remove, egui::Button::new(tr("Usuń warstwę")))
                     .clicked()
@@ -306,7 +327,7 @@ pub fn render_menu_bar(
                     ui.close();
                 }
                 ui.separator();
-                let can_move_up = app.active_layer_index + 1 < app.document.layer_count();
+                let can_move_up = app.doc.active_layer_index + 1 < app.doc.document.layer_count();
                 if ui
                     .add_enabled(can_move_up, egui::Button::new(tr("Przesuń w górę")))
                     .clicked()
@@ -314,8 +335,8 @@ pub fn render_menu_bar(
                     app.move_active_layer_up();
                     ui.close();
                 }
-                let can_move_down = app.active_layer_index > 0
-                    && app.active_layer_index < app.document.layer_count();
+                let can_move_down = app.doc.active_layer_index > 0
+                    && app.doc.active_layer_index < app.doc.document.layer_count();
                 if ui
                     .add_enabled(can_move_down, egui::Button::new(tr("Przesuń w dół")))
                     .clicked()
@@ -327,7 +348,7 @@ pub fn render_menu_bar(
 
             // 7. Kolory (filtry kolorów)
             ui.menu_button(tr("Kolory"), |ui| {
-                let has_layers = !app.document.layers.is_empty();
+                let has_layers = !app.doc.document.layers.is_empty();
                 if ui
                     .add_enabled(has_layers, egui::Button::new(tr("Jasność i kontrast...")))
                     .clicked()
@@ -354,32 +375,32 @@ pub fn render_menu_bar(
             // 8. Narzędzia
             ui.menu_button(tr("Narzędzia"), |ui| {
                 if ui.button(tr("Zaznaczenie prostokątne (R)")).clicked() {
-                    app.active_tool = ActiveTool::SelectRect;
+                    app.set_active_tool(ActiveTool::SelectRect);
                     ui.close();
                 }
                 if ui.button(tr("Zaznaczenie eliptyczne (E)")).clicked() {
-                    app.active_tool = ActiveTool::SelectEllipse;
+                    app.set_active_tool(ActiveTool::SelectEllipse);
                     ui.close();
                 }
                 if ui.button(tr("Zaznaczenie odręczne (F)")).clicked() {
-                    app.active_tool = ActiveTool::SelectFree;
+                    app.set_active_tool(ActiveTool::SelectFree);
                     ui.close();
                 }
                 if ui.button(tr("Różdżka (U)")).clicked() {
-                    app.active_tool = ActiveTool::MagicWand;
+                    app.set_active_tool(ActiveTool::MagicWand);
                     ui.close();
                 }
                 if ui.button(tr("Zaznaczenie wg koloru (Shift+O)")).clicked() {
-                    app.active_tool = ActiveTool::SelectColor;
+                    app.set_active_tool(ActiveTool::SelectColor);
                     ui.close();
                 }
                 ui.separator();
                 if ui.button(tr("Przesuwanie (M)")).clicked() {
-                    app.active_tool = ActiveTool::Move;
+                    app.set_active_tool(ActiveTool::Move);
                     ui.close();
                 }
                 if ui.button(tr("Kadrowanie (Shift+C)")).clicked() {
-                    app.active_tool = ActiveTool::Crop;
+                    app.set_active_tool(ActiveTool::Crop);
                     ui.close();
                 }
                 if ui.button(tr("Obrót (Shift+R)")).clicked() {
@@ -396,51 +417,51 @@ pub fn render_menu_bar(
                 }
                 ui.separator();
                 if ui.button(tr("Ołówek (N)")).clicked() {
-                    app.active_tool = ActiveTool::Pencil;
+                    app.set_active_tool(ActiveTool::Pencil);
                     ui.close();
                 }
                 if ui.button(tr("Pędzel (P)")).clicked() {
-                    app.active_tool = ActiveTool::Brush;
+                    app.set_active_tool(ActiveTool::Brush);
                     ui.close();
                 }
                 if ui.button(tr("Aerograf (A)")).clicked() {
-                    app.active_tool = ActiveTool::Airbrush;
+                    app.set_active_tool(ActiveTool::Airbrush);
                     ui.close();
                 }
                 if ui.button(tr("Gumka (Shift+E)")).clicked() {
-                    app.active_tool = ActiveTool::Eraser;
+                    app.set_active_tool(ActiveTool::Eraser);
                     ui.close();
                 }
                 if ui.button(tr("Kubełek (Shift+B)")).clicked() {
-                    app.active_tool = ActiveTool::Bucket;
+                    app.set_active_tool(ActiveTool::Bucket);
                     ui.close();
                 }
                 if ui.button(tr("Gradient (G)")).clicked() {
-                    app.active_tool = ActiveTool::Gradient;
+                    app.set_active_tool(ActiveTool::Gradient);
                     ui.close();
                 }
                 if ui.button(tr("Klonowanie (C)")).clicked() {
-                    app.active_tool = ActiveTool::Clone;
+                    app.set_active_tool(ActiveTool::Clone);
                     ui.close();
                 }
                 if ui.button(tr("Rozmazywanie (Shift+S)")).clicked() {
-                    app.active_tool = ActiveTool::Smudge;
+                    app.set_active_tool(ActiveTool::Smudge);
                     ui.close();
                 }
                 if ui
                     .button(tr("Rozjaśnianie/Ściemnianie (Shift+D)"))
                     .clicked()
                 {
-                    app.active_tool = ActiveTool::DodgeBurn;
+                    app.set_active_tool(ActiveTool::DodgeBurn);
                     ui.close();
                 }
                 if ui.button(tr("Rozmywanie/Wyostrzanie (Shift+U)")).clicked() {
-                    app.active_tool = ActiveTool::BlurSharpen;
+                    app.set_active_tool(ActiveTool::BlurSharpen);
                     ui.close();
                 }
                 ui.separator();
                 if ui.button(tr("Pipeta (O)")).clicked() {
-                    app.active_tool = ActiveTool::Eyedropper;
+                    app.set_active_tool(ActiveTool::Eyedropper);
                     ui.close();
                 }
                 if ui.button(tr("Tekst (T)")).clicked() {
@@ -448,15 +469,15 @@ pub fn render_menu_bar(
                     ui.close();
                 }
                 if ui.button(tr("Lupa (Z)")).clicked() {
-                    app.active_tool = ActiveTool::Zoom;
+                    app.set_active_tool(ActiveTool::Zoom);
                     ui.close();
                 }
                 if ui.button(tr("Miarka (Shift+M)")).clicked() {
-                    app.active_tool = ActiveTool::Measure;
+                    app.set_active_tool(ActiveTool::Measure);
                     ui.close();
                 }
                 if ui.button(tr("Przesuwanie widoku (Spacja)")).clicked() {
-                    app.active_tool = ActiveTool::Pan;
+                    app.set_active_tool(ActiveTool::Pan);
                     ui.close();
                 }
             });
@@ -469,7 +490,7 @@ pub fn render_menu_bar(
                     {
                         if ui
                             .add_enabled(
-                                app.ai_rx.is_none(),
+                                app.doc.ai_rx.is_none(),
                                 egui::Button::new(tr("Usuń tło (AI)")),
                             )
                             .on_hover_text(tr("Model U²-Net-p na CPU, ok. 1–2 s"))
@@ -480,13 +501,13 @@ pub fn render_menu_bar(
                         }
                         if ui
                             .add_enabled(
-                                app.ai_rx.is_none(),
+                                app.doc.ai_rx.is_none(),
                                 egui::Button::new(tr("Zaznacz pierwszy plan (AI)")),
                             )
                             .clicked()
                         {
                             app.start_ai_background(true);
-                            app.selection_shape = SelectionShape::Rect;
+                            app.doc.selection_shape = SelectionShape::Rect;
                             ui.close();
                         }
                     }
@@ -496,7 +517,7 @@ pub fn render_menu_bar(
                     }
                 });
                 ui.separator();
-                let has_layers = !app.document.layers.is_empty();
+                let has_layers = !app.doc.document.layers.is_empty();
                 if ui
                     .add_enabled(has_layers, egui::Button::new(tr("Rozmycie Gaussa...")))
                     .clicked()

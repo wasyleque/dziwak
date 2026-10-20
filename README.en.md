@@ -14,12 +14,14 @@ Approximately 100 MB RAM, 0% CPU when idle, no graphics card requirements.
 - **Edit:** clear selection (Delete), fill with foreground / background color
 - **Painting:** brush, pencil, airbrush, eraser, bucket fill, gradient, clone, smudge, dodge/burn, blur/sharpen
 - **Transformations:** move, crop, rotate, scale, flip; image scaling and canvas size
-- **Text:** system fonts (via fontconfig), text on a new layer
+- **Text:** GIMP-style — drag a box and type directly on the image; the text layer is created immediately; system fonts, size, color, alignment, line spacing
+- **Tabs:** several images at once (Ctrl+O, multiple files in the dialog or `dziwak a.png b.png`), each with its own layers, history, selection and view; inactive tabs free GPU memory, undo history shares one memory budget
 - **Filters with live preview:** brightness/contrast, hue/saturation, Gaussian blur, sharpen
 - **Background removal:** uniform (from edges) and AI (U²-Net-p locally on CPU, ~1–2 s, no GPU)
 - **Files:** PNG, JPEG, WebP and custom `.dziwak` format (layers, LZ4 compression)
 - **Interface:** GIMP 2.10 Dark layout with Omarchy theme accent; Polish, English, Spanish (Edit → Language)
 - Undo/redo with memory limit (copy-on-write tile snapshots)
+- Asks to save when closing a tab or the app (also Super+W in Hyprland); crash reasons are written to `~/.cache/dziwak/crash.log`
 
 ## Building
 
@@ -59,12 +61,15 @@ Tools have shortcuts like in GIMP 2.10.
 | Shift+R | Rotate | Shift+S | Smudge |
 | Shift+T | Scale | Shift+D | Dodge/Burn |
 | Shift+F | Flip | Shift+U | Blur/Sharpen |
-| O | Color Picker | T | Text |
+| O | Color Picker | T | Text (box on the image; Ctrl+Enter = apply, Esc = cancel) |
 | Z | Zoom | Shift+M | Measure |
 
 | Shortcut | Action |
 |---|---|
-| Ctrl+O / Ctrl+Shift+S | Open / Save As |
+| Ctrl+O / Ctrl+Shift+S | Open (in a new tab) / Save As |
+| Ctrl+Tab / Ctrl+Shift+Tab | Next / previous tab |
+| Ctrl+W | Close tab (or middle-click the tab) |
+| Ctrl+Q | Quit (asks about unsaved images) |
 | Ctrl+Z / Ctrl+Shift+Z, Ctrl+Y | Undo / Redo |
 | Ctrl+A / Ctrl+Shift+A / Ctrl+I | Select All / Deselect / Invert Selection |
 | Delete | Clear selection (no selection: whole layer) |

@@ -13,10 +13,11 @@ use eframe::egui;
 use state::DziwakApp;
 
 fn main() -> Result<(), eframe::Error> {
+    install_crash_log();
     i18n::init();
-    let file_arg = std::env::args().nth(1).map(PathBuf::from);
+    let file_args: Vec<PathBuf> = std::env::args().skip(1).map(PathBuf::from).collect();
 
-    let initial_title = match &file_arg {
+    let initial_title = match file_args.last() {
         Some(path) => {
             let name = path
                 .file_name()
@@ -57,8 +58,8 @@ fn main() -> Result<(), eframe::Error> {
                 }
             }
             let mut app = DziwakApp::new();
-            if let Some(path) = file_arg {
-                app.open_file_from_path(path);
+            if !file_args.is_empty() {
+                app.open_files_from_cli(file_args);
             }
             Ok(Box::new(app))
         }),
@@ -75,4 +76,37 @@ impl eframe::App for DziwakApp {
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         ui::render_app(self, ctx, frame);
     }
+}
+
+/// Zapisuje przyczynę paniki do ~/.cache/dziwak/crash.log (program z menu nie ma terminala).
+fn install_crash_log() {
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let dir = std::env::var_os("XDG_CACHE_HOME")
+            .map(PathBuf::from)
+            .or_else(|| std::env::var_os("LOCALAPPDATA").map(PathBuf::from))
+            .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".cache")))
+            .map(|d| d.join("dziwak"));
+        if let Some(dir) = dir {
+            let _ = std::fs::create_dir_all(&dir);
+            let secs = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            let entry = format!(
+                "[{secs}] Dziwak {}: {info}\n{}\n\n",
+                env!("CARGO_PKG_VERSION"),
+                std::backtrace::Backtrace::force_capture()
+            );
+            if let Ok(mut f) = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(dir.join("crash.log"))
+            {
+                use std::io::Write;
+                let _ = f.write_all(entry.as_bytes());
+            }
+        }
+        default_hook(info);
+    }));
 }

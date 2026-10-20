@@ -108,8 +108,9 @@ Shift+U rozmywanie/wyostrzanie, T tekst, Z lupa, Shift+M miarka, Spacja przesuwa
 - [x] T7 Obraz: Skaluj obraz, Rozmiar płótna, Obróć 90°/180°, Odbij obraz.
 - [x] T8 Klonowanie (C): Ctrl+klik = źródło, malowanie kopiuje z przesunięciem.
 - [x] T9 Rozmazywanie (Shift+S), Rozjaśnianie/Ściemnianie (Shift+D), Rozmywanie/Wyostrzanie pędzlem (Shift+U).
-- [x] T10 Tekst (T): warstwa tekstowa rastrowana czcionką (ab_glyph, czcionka z systemu lub wbudowana DejaVu).
+- [x] T10 Tekst (T): edycja bezpośrednio w ramce na płótnie (styl GIMP, bez modalnego okna), podgląd jako tekstura, kursor z szerokości glifów (`caret_positions`), czcionka z `fc-list`.
 - [x] T11 Lupa (Z): klik = powiększ, Alt/Ctrl+klik = pomniejsz, przeciągnięcie = powiększ obszar; Miarka (Shift+M): długość i kąt w pasku stanu.
+- [x] T12 Zakładki obrazów (`DocumentTab`, `std::mem::swap`, zwalnianie tekstur GPU w tle, wspólny budżet historii, pasek zakładek, skróty `Ctrl+N`/`Ctrl+W`/`Ctrl+Tab`/`Ctrl+Shift+Tab`, sekwencyjne pytanie o zapis przy zamykaniu).
 Mikrozadania rdzenia (aider): 
 - [x] M36 `core/src/polygon.rs`: maska wielokąta (scanline even-odd, AA 4x w pionie) + testy.
 - [x] M37 `core/src/fill.rs`: `color_select_mask(buf, w, h, color, tol)` (globalnie) + testy.
@@ -121,3 +122,5 @@ Mikrozadania rdzenia (aider):
 - [x] M43 `core/src/text.rs`: `rasterize_text(font_data, text, size_px) -> Option<TextMask>` (ab_glyph, wiele linii) + `stamp_mask(layer, &TextMask, x, y, color)` + testy.
 - [x] M45 `document.rs`: `merge_down(index)` + `alpha_mask(layer_index) -> Vec<u8>`; `fill.rs`: `color_to_alpha_mask(buf, w, h, color, tol)` = odwrotność color_select_mask (zachowaj = 0 dla koloru) + testy.
 - [x] M46 `selection.rs`: `revision` (globalny licznik zmian) + `outline_segments()` (prawdziwy obrys maski, odcinki poziome i pionowe) + testy.
+- [x] M47 `brush.rs`: rozmazywanie z buforem farby jak GIMP (`SmudgeBuffer`, `smudge_begin`, `smudge_dab`) + test przeciągania koloru.
+- [x] M48 `history.rs`: `set_max_bytes(bytes, current_doc)` — zmiana limitu w locie z przycięciem najstarszych migawek (wspólny limit pamięci dla zakładek) + test.

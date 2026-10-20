@@ -6,7 +6,7 @@ use eframe::egui;
 
 /// Wyświetla okno dialogowe filtrów obrazu z podglądem na żywo i debouncem (~100 ms).
 pub fn render_filter_dialog(app: &mut DziwakApp, ctx: &egui::Context) {
-    let Some(mut dialog) = app.filter_dialog.take() else {
+    let Some(mut dialog) = app.doc.filter_dialog.take() else {
         return;
     };
 
@@ -17,13 +17,13 @@ pub fn render_filter_dialog(app: &mut DziwakApp, ctx: &egui::Context) {
     if dialog.pending_apply && dialog.preview {
         if let Some(t) = dialog.last_apply_time {
             if now.duration_since(t) >= debounce_duration {
-                app.filter_dialog = Some(dialog);
+                app.doc.filter_dialog = Some(dialog);
                 app.apply_filter_preview();
-                if let Some(d) = &mut app.filter_dialog {
+                if let Some(d) = &mut app.doc.filter_dialog {
                     d.last_apply_time = Some(now);
                     d.pending_apply = false;
                 }
-                dialog = match app.filter_dialog.take() {
+                dialog = match app.doc.filter_dialog.take() {
                     Some(d) => d,
                     None => return,
                 };
@@ -153,25 +153,30 @@ pub fn render_filter_dialog(app: &mut DziwakApp, ctx: &egui::Context) {
         should_cancel = true;
     }
 
-    app.filter_dialog = Some(dialog);
+    app.doc.filter_dialog = Some(dialog);
 
     if should_apply {
         app.apply_filter_dialog();
     } else if should_cancel {
         app.cancel_filter_dialog();
     } else if slider_changed {
-        let can_apply = match app.filter_dialog.as_ref().and_then(|d| d.last_apply_time) {
+        let can_apply = match app
+            .doc
+            .filter_dialog
+            .as_ref()
+            .and_then(|d| d.last_apply_time)
+        {
             None => true,
             Some(t) => now.duration_since(t) >= debounce_duration,
         };
 
         if can_apply {
             app.apply_filter_preview();
-            if let Some(d) = &mut app.filter_dialog {
+            if let Some(d) = &mut app.doc.filter_dialog {
                 d.last_apply_time = Some(now);
                 d.pending_apply = false;
             }
-        } else if let Some(d) = &mut app.filter_dialog {
+        } else if let Some(d) = &mut app.doc.filter_dialog {
             d.pending_apply = true;
             if let Some(t) = d.last_apply_time {
                 let remaining = debounce_duration.saturating_sub(now.duration_since(t));
@@ -183,7 +188,7 @@ pub fn render_filter_dialog(app: &mut DziwakApp, ctx: &egui::Context) {
 
 /// Wyświetla okno dialogowe transformacji aktywnej warstwy (T6) z podglądem na żywo i debouncem (~100 ms).
 pub fn render_transform_dialog(app: &mut DziwakApp, ctx: &egui::Context) {
-    let Some(mut dialog) = app.transform_dialog.take() else {
+    let Some(mut dialog) = app.doc.transform_dialog.take() else {
         return;
     };
 
@@ -194,13 +199,13 @@ pub fn render_transform_dialog(app: &mut DziwakApp, ctx: &egui::Context) {
     if dialog.pending_apply && dialog.preview {
         if let Some(t) = dialog.last_apply_time {
             if now.duration_since(t) >= debounce_duration {
-                app.transform_dialog = Some(dialog);
+                app.doc.transform_dialog = Some(dialog);
                 app.apply_transform_preview();
-                if let Some(d) = &mut app.transform_dialog {
+                if let Some(d) = &mut app.doc.transform_dialog {
                     d.last_apply_time = Some(now);
                     d.pending_apply = false;
                 }
-                dialog = match app.transform_dialog.take() {
+                dialog = match app.doc.transform_dialog.take() {
                     Some(d) => d,
                     None => return,
                 };
@@ -311,7 +316,7 @@ pub fn render_transform_dialog(app: &mut DziwakApp, ctx: &egui::Context) {
         should_cancel = true;
     }
 
-    app.transform_dialog = Some(dialog);
+    app.doc.transform_dialog = Some(dialog);
 
     if should_apply {
         app.apply_transform_dialog();
@@ -319,6 +324,7 @@ pub fn render_transform_dialog(app: &mut DziwakApp, ctx: &egui::Context) {
         app.cancel_transform_dialog();
     } else if changed {
         let can_apply = match app
+            .doc
             .transform_dialog
             .as_ref()
             .and_then(|d| d.last_apply_time)
@@ -329,11 +335,11 @@ pub fn render_transform_dialog(app: &mut DziwakApp, ctx: &egui::Context) {
 
         if can_apply {
             app.apply_transform_preview();
-            if let Some(d) = &mut app.transform_dialog {
+            if let Some(d) = &mut app.doc.transform_dialog {
                 d.last_apply_time = Some(now);
                 d.pending_apply = false;
             }
-        } else if let Some(d) = &mut app.transform_dialog {
+        } else if let Some(d) = &mut app.doc.transform_dialog {
             d.pending_apply = true;
             if let Some(t) = d.last_apply_time {
                 let remaining = debounce_duration.saturating_sub(now.duration_since(t));
@@ -348,7 +354,7 @@ pub fn render_flatten_warning_dialog(app: &mut DziwakApp, ctx: &egui::Context) {
     let mut save_confirmed = false;
     let mut cancel_confirmed = false;
 
-    if let Some(path) = &app.pending_flatten_save {
+    if let Some(path) = &app.doc.pending_flatten_save {
         let filename = path.file_name().and_then(|f| f.to_str()).unwrap_or("pliku");
 
         egui::Window::new(tr("Ostrzeżenie o spłaszczeniu warstw"))
@@ -362,7 +368,7 @@ pub fn render_flatten_warning_dialog(app: &mut DziwakApp, ctx: &egui::Context) {
                      Wszystkie warstwy zostaną spłaszczone do pojedynczego obrazu.\n\
                      Aby zachować strukturę warstw, zapisz plik w formacie Dziwak (.dziwak).\n\n\
                      Czy chcesz kontynuować zapis?",
-                    app.document.layer_count()
+                    app.doc.document.layer_count()
                 ));
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
@@ -377,11 +383,88 @@ pub fn render_flatten_warning_dialog(app: &mut DziwakApp, ctx: &egui::Context) {
     }
 
     if save_confirmed {
-        if let Some(path) = app.pending_flatten_save.take() {
-            app.execute_save(path);
+        if let Some(path) = app.doc.pending_flatten_save.take() {
+            if app.execute_save(path) && app.close_after_save && app.complete_close_after_save() {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            }
         }
     } else if cancel_confirmed {
-        app.pending_flatten_save = None;
+        app.doc.pending_flatten_save = None;
+        app.close_after_save = false;
+    }
+}
+
+/// Wyświetla modalne okno pytania o zapis niezapisanych zmian przed zamknięciem zakładki lub programu.
+pub fn render_close_confirm_dialog(app: &mut DziwakApp, ctx: &egui::Context) {
+    if !app.show_close_confirm_dialog {
+        return;
+    }
+
+    let mut save_clicked = false;
+    let mut discard_clicked = false;
+    let mut discard_all_clicked = false;
+    let mut cancel_clicked = false;
+
+    if ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Enter)) {
+        save_clicked = true;
+    } else if ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
+        cancel_clicked = true;
+    }
+
+    let target_tab_id = app.close_confirm_tab_id.unwrap_or(app.doc.id);
+    let doc_name = app
+        .tab_by_id(target_tab_id)
+        .map(|t| t.document_name())
+        .unwrap_or_else(|| app.document_name());
+    let question = tr("Zapisać zmiany przed zamknięciem?");
+    let message = match crate::i18n::lang() {
+        crate::i18n::Lang::Pl => format!("Zapisać zmiany w {doc_name} przed zamknięciem?"),
+        _ => format!("{question} ({doc_name})"),
+    };
+
+    egui::Window::new(question)
+        .collapsible(false)
+        .resizable(false)
+        .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+        .show(ctx, |ui| {
+            ui.label(message);
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                if ui.button(tr("Zapisz")).clicked() {
+                    save_clicked = true;
+                }
+                if ui.button(tr("Nie zapisuj")).clicked() {
+                    discard_clicked = true;
+                }
+                if app.closing_entire_app && ui.button(tr("Nie zapisuj żadnego")).clicked() {
+                    discard_all_clicked = true;
+                }
+                if ui.button(tr("Anuluj")).clicked() {
+                    cancel_clicked = true;
+                }
+            });
+        });
+
+    if save_clicked {
+        let _ = app.switch_to_tab(target_tab_id);
+        app.show_close_confirm_dialog = false;
+        app.close_after_save = true;
+        if let Some(path) = app.doc.current_file_path.clone() {
+            if app.request_save_to_path(path) && app.complete_close_after_save() {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            }
+        } else {
+            app.save_file_dialog();
+        }
+    } else if discard_clicked {
+        if app.confirm_discard_and_close() {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        }
+    } else if discard_all_clicked {
+        app.confirm_discard_all_and_close();
+        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+    } else if cancel_clicked {
+        app.cancel_close_request();
     }
 }
 
@@ -467,7 +550,7 @@ pub fn render_about_dialog(app: &mut DziwakApp, ctx: &egui::Context) {
 
 /// Wyświetla okno dialogowe skalowania całego obrazu (T7).
 pub fn render_scale_image_dialog(app: &mut DziwakApp, ctx: &egui::Context) {
-    let Some(mut dialog) = app.scale_image_dialog.take() else {
+    let Some(mut dialog) = app.doc.scale_image_dialog.take() else {
         return;
     };
 
@@ -538,13 +621,13 @@ pub fn render_scale_image_dialog(app: &mut DziwakApp, ctx: &egui::Context) {
     if should_apply {
         app.scale_image(dialog.width, dialog.height);
     } else if !should_cancel {
-        app.scale_image_dialog = Some(dialog);
+        app.doc.scale_image_dialog = Some(dialog);
     }
 }
 
 /// Wyświetla okno dialogowe zmiany rozmiaru płótna (T7).
 pub fn render_canvas_size_dialog(app: &mut DziwakApp, ctx: &egui::Context) {
-    let Some(mut dialog) = app.canvas_size_dialog.take() else {
+    let Some(mut dialog) = app.doc.canvas_size_dialog.take() else {
         return;
     };
 
@@ -631,128 +714,17 @@ pub fn render_canvas_size_dialog(app: &mut DziwakApp, ctx: &egui::Context) {
             dialog.offset_y,
         );
     } else if !should_cancel {
-        app.canvas_size_dialog = Some(dialog);
-    }
-}
-
-/// Wyświetla okno dialogowe wstawiania tekstu z podglądem na żywo (T10).
-pub fn render_text_dialog(app: &mut DziwakApp, ctx: &egui::Context) {
-    let Some(mut dialog) = app.text_dialog.take() else {
-        return;
-    };
-
-    let mut is_open = true;
-    let mut should_commit = false;
-    let mut should_cancel = false;
-    let mut changed = false;
-
-    egui::Window::new(tr("Wstaw tekst"))
-        .open(&mut is_open)
-        .collapsible(false)
-        .resizable(true)
-        .default_width(320.0_f32)
-        .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0_f32, 0.0_f32))
-        .show(ctx, |ui| {
-            ui.add_space(4.0_f32);
-
-            ui.label(tr("Tekst:"));
-            let text_resp = ui.add(
-                egui::TextEdit::multiline(&mut dialog.text)
-                    .desired_rows(3)
-                    .desired_width(f32::INFINITY),
-            );
-            if text_resp.changed() {
-                changed = true;
-            }
-
-            ui.add_space(4.0_f32);
-            ui.label(tr("Rodzina czcionki:"));
-            let fam_resp = ui.text_edit_singleline(&mut dialog.font_family);
-            if fam_resp.changed() {
-                changed = true;
-            }
-
-            ui.add_space(4.0_f32);
-            ui.label(tr("Rozmiar:"));
-            let size_resp =
-                ui.add(egui::Slider::new(&mut dialog.font_size, 8.0_f32..=200.0_f32).suffix(" px"));
-            if size_resp.changed() {
-                changed = true;
-            }
-
-            ui.add_space(4.0_f32);
-            ui.horizontal(|ui| {
-                ui.label(tr("Pozycja:"));
-                ui.label("X:");
-                ui.add(egui::DragValue::new(&mut dialog.pos.0));
-                ui.label("Y:");
-                ui.add(egui::DragValue::new(&mut dialog.pos.1));
-            });
-
-            ui.add_space(4.0_f32);
-            ui.horizontal(|ui| {
-                ui.label(tr("Kolor:"));
-                egui::color_picker::color_picker_color32(
-                    ui,
-                    &mut dialog.color,
-                    egui::color_picker::Alpha::Opaque,
-                );
-            });
-
-            if changed {
-                DziwakApp::render_text_mask_for_dialog(&mut dialog);
-            }
-
-            ui.add_space(4.0_f32);
-            if let Some(mask) = &dialog.preview_mask {
-                ui.label(
-                    egui::RichText::new(format!(
-                        "{}: {}×{} px",
-                        tr("Wymiary"),
-                        mask.width,
-                        mask.height
-                    ))
-                    .small()
-                    .weak(),
-                );
-            }
-            if let Some(err) = &dialog.error {
-                ui.colored_label(egui::Color32::RED, err);
-            }
-
-            ui.add_space(8.0_f32);
-            ui.separator();
-            ui.horizontal(|ui| {
-                let can_apply = dialog.preview_mask.is_some();
-                if ui
-                    .add_enabled(can_apply, egui::Button::new(tr("Zatwierdź (nowa warstwa)")))
-                    .clicked()
-                {
-                    should_commit = true;
-                }
-                if ui.button(tr("Anuluj")).clicked() {
-                    should_cancel = true;
-                }
-            });
-        });
-
-    if should_commit {
-        app.text_dialog = Some(dialog);
-        app.commit_text();
-    } else if !should_cancel && is_open {
-        app.text_dialog = Some(dialog);
-    } else {
-        app.cancel_text();
+        app.doc.canvas_size_dialog = Some(dialog);
     }
 }
 
 /// Renderuje wszystkie okna dialogowe aplikacji.
 pub fn render_dialogs(app: &mut DziwakApp, ctx: &egui::Context) {
+    render_close_confirm_dialog(app, ctx);
     render_filter_dialog(app, ctx);
     render_transform_dialog(app, ctx);
     render_scale_image_dialog(app, ctx);
     render_canvas_size_dialog(app, ctx);
-    render_text_dialog(app, ctx);
     render_flatten_warning_dialog(app, ctx);
     render_error_dialog(app, ctx);
     render_about_dialog(app, ctx);

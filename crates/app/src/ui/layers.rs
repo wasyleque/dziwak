@@ -95,8 +95,8 @@ pub fn render_brushes_presets(app: &mut DziwakApp, ui: &mut egui::Ui) {
 
 /// Menu kontekstowe aktywnej warstwy (prawy przycisk w panelu Warstwy).
 fn layer_context_menu(app: &mut DziwakApp, ui: &mut egui::Ui) {
-    let count = app.document.layer_count();
-    let idx = app.active_layer_index;
+    let count = app.doc.document.layer_count();
+    let idx = app.doc.active_layer_index;
     if ui.button(tr("Nowa warstwa")).clicked() {
         app.add_new_layer();
         ui.close();
@@ -155,7 +155,10 @@ fn layer_context_menu(app: &mut DziwakApp, ui: &mut egui::Ui) {
     }
     #[cfg(feature = "ai")]
     if ui
-        .add_enabled(app.ai_rx.is_none(), egui::Button::new(tr("Usuń tło (AI)")))
+        .add_enabled(
+            app.doc.ai_rx.is_none(),
+            egui::Button::new(tr("Usuń tło (AI)")),
+        )
         .clicked()
     {
         app.start_ai_background(false);
@@ -175,9 +178,10 @@ fn layer_context_menu(app: &mut DziwakApp, ui: &mut egui::Ui) {
 pub fn render_layers_content(app: &mut DziwakApp, ui: &mut egui::Ui) {
     // Tryb mieszania aktywnej warstwy
     let active_blend = app
+        .doc
         .document
         .layers
-        .get(app.active_layer_index)
+        .get(app.doc.active_layer_index)
         .map(|l| l.blend);
     if let Some(current_blend) = active_blend {
         let mut chosen = current_blend;
@@ -193,7 +197,7 @@ pub fn render_layers_content(app: &mut DziwakApp, ui: &mut egui::Ui) {
         });
         if chosen != current_blend {
             app.push_history();
-            if let Some(layer) = app.document.layers.get_mut(app.active_layer_index) {
+            if let Some(layer) = app.doc.document.layers.get_mut(app.doc.active_layer_index) {
                 layer.blend = chosen;
             }
             app.mark_document_dirty();
@@ -204,9 +208,10 @@ pub fn render_layers_content(app: &mut DziwakApp, ui: &mut egui::Ui) {
     // Lista warstw od góry (najwyższa warstwa u góry)
     // Suwak krycia wybranej (aktywnej) warstwy (0-100%)
     let active_opacity = app
+        .doc
         .document
         .layers
-        .get(app.active_layer_index)
+        .get(app.doc.active_layer_index)
         .map(|l| l.opacity);
     if let Some(current_opacity) = active_opacity {
         ui.horizontal(|ui| {
@@ -217,19 +222,19 @@ pub fn render_layers_content(app: &mut DziwakApp, ui: &mut egui::Ui) {
 
             if resp.drag_started() {
                 app.push_history();
-                app.is_dragging_opacity = true;
+                app.doc.is_dragging_opacity = true;
             }
             if resp.changed() {
-                if !app.is_dragging_opacity {
+                if !app.doc.is_dragging_opacity {
                     app.push_history();
                 }
-                if let Some(layer) = app.document.layers.get_mut(app.active_layer_index) {
+                if let Some(layer) = app.doc.document.layers.get_mut(app.doc.active_layer_index) {
                     layer.opacity = (opacity_pct / 100.0).clamp(0.0, 1.0);
                 }
                 app.mark_document_dirty();
             }
             if resp.drag_stopped() {
-                app.is_dragging_opacity = false;
+                app.doc.is_dragging_opacity = false;
             }
         });
         ui.separator();
@@ -249,11 +254,11 @@ pub fn render_layers_content(app: &mut DziwakApp, ui: &mut egui::Ui) {
         let mut start_rename = None;
         let mut commit_rename = None;
 
-        let count = app.document.layer_count();
+        let count = app.doc.document.layer_count();
         for idx in (0..count).rev() {
             let thumb = app.layer_thumbnail_texture(&ui.ctx().clone(), idx);
-            let is_active = idx == app.active_layer_index;
-            let layer = &app.document.layers[idx];
+            let is_active = idx == app.doc.active_layer_index;
+            let layer = &app.doc.document.layers[idx];
 
             let row = ui.horizontal(|ui| {
                 // Ikona oka (widoczność) + checkbox widoczności
@@ -294,18 +299,18 @@ pub fn render_layers_content(app: &mut DziwakApp, ui: &mut egui::Ui) {
                 }
                 let mut menu_resp = thumb_resp.clone();
 
-                if app.editing_layer_index == Some(idx) {
-                    let text_resp = ui.text_edit_singleline(&mut app.editing_layer_name);
-                    if app.request_focus_rename {
+                if app.doc.editing_layer_index == Some(idx) {
+                    let text_resp = ui.text_edit_singleline(&mut app.doc.editing_layer_name);
+                    if app.doc.request_focus_rename {
                         text_resp.request_focus();
-                        app.request_focus_rename = false;
+                        app.doc.request_focus_rename = false;
                     }
                     if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
-                        app.editing_layer_index = None;
+                        app.doc.editing_layer_index = None;
                     } else if text_resp.lost_focus()
                         || ui.input(|i| i.key_pressed(egui::Key::Enter))
                     {
-                        commit_rename = Some((idx, app.editing_layer_name.clone()));
+                        commit_rename = Some((idx, app.doc.editing_layer_name.clone()));
                     }
                 } else {
                     let name = if is_active {
@@ -344,26 +349,38 @@ pub fn render_layers_content(app: &mut DziwakApp, ui: &mut egui::Ui) {
                 layer_to_select = Some(idx);
             }
             row_resp.context_menu(|ui| {
-                app.active_layer_index = idx;
+                app.doc.active_layer_index = idx;
                 layer_context_menu(app, ui);
             });
+            // Akcja z menu (spłaszcz, usuń, scal…) mogła zmienić liczbę warstw — dalsze
+            // indeksy z tej pętli są nieaktualne; następna klatka narysuje panel od nowa.
+            if app.doc.document.layer_count() != count {
+                break;
+            }
         }
 
-        if let Some(idx) = layer_to_toggle_vis {
+        // Indeksy zebrane w pętli są ważne tylko, jeśli stos warstw się nie zmienił.
+        let n_layers = app.doc.document.layer_count();
+        let still_valid = |idx: usize| idx < n_layers;
+        if let Some(idx) = layer_to_toggle_vis.filter(|&i| still_valid(i)) {
             app.toggle_layer_visibility(idx);
         }
-        if let Some(idx) = layer_to_select {
-            app.active_layer_index = idx;
+        if let Some(idx) = layer_to_select.filter(|&i| still_valid(i)) {
+            app.doc.active_layer_index = idx;
+            app.ensure_text_editor_valid();
         }
+        let start_rename = start_rename.filter(|(i, _)| still_valid(*i));
+        let commit_rename = commit_rename.filter(|(i, _)| still_valid(*i));
         if let Some((idx, name)) = start_rename {
-            app.editing_layer_index = Some(idx);
-            app.editing_layer_name = name;
-            app.request_focus_rename = true;
-            app.active_layer_index = idx;
+            app.abort_text_editing();
+            app.doc.editing_layer_index = Some(idx);
+            app.doc.editing_layer_name = name;
+            app.doc.request_focus_rename = true;
+            app.doc.active_layer_index = idx;
         }
         if let Some((idx, new_name)) = commit_rename {
             app.rename_layer(idx, new_name);
-            app.editing_layer_index = None;
+            app.doc.editing_layer_index = None;
         }
     });
 
@@ -373,14 +390,14 @@ pub fn render_layers_content(app: &mut DziwakApp, ui: &mut egui::Ui) {
         if render_layer_action_btn(ui, UiIcon::NewLayer, "Dodaj", true, "Nowa warstwa").clicked() {
             app.add_new_layer();
         }
-        let can_move_up = app.active_layer_index + 1 < app.document.layer_count();
+        let can_move_up = app.doc.active_layer_index + 1 < app.doc.document.layer_count();
         if render_layer_action_btn(ui, UiIcon::Raise, "W górę", can_move_up, "Podnieś warstwę")
             .clicked()
         {
             app.move_active_layer_up();
         }
-        let can_move_down =
-            app.active_layer_index > 0 && app.active_layer_index < app.document.layer_count();
+        let can_move_down = app.doc.active_layer_index > 0
+            && app.doc.active_layer_index < app.doc.document.layer_count();
         if render_layer_action_btn(ui, UiIcon::Lower, "W dół", can_move_down, "Obniż warstwę")
             .clicked()
         {
@@ -391,7 +408,7 @@ pub fn render_layers_content(app: &mut DziwakApp, ui: &mut egui::Ui) {
         {
             app.duplicate_active_layer();
         }
-        let can_remove = app.document.layer_count() > 1;
+        let can_remove = app.doc.document.layer_count() > 1;
         if render_layer_action_btn(ui, UiIcon::Delete, "Usuń", can_remove, "Usuń warstwę").clicked()
         {
             app.remove_active_layer();

@@ -142,6 +142,92 @@ pub fn apply_dab(
     }
 }
 
+/// Bufor farby narzędzia Rozmazywanie (jak „accumulator” w GIMP): kwadrat `size` x `size` pikseli.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SmudgeBuffer {
+    pub size: usize,
+    pub data: Vec<Rgba8>,
+}
+
+/// Początek pociągnięcia: pędzel „nabiera” piksele spod siebie.
+pub fn smudge_begin(layer: &Layer, cx: f32, cy: f32, radius: f32) -> SmudgeBuffer {
+    let half = radius.max(0.5).ceil() as i64;
+    let size = (2 * half + 1) as usize;
+    let (ox, oy) = (cx.round() as i64 - half, cy.round() as i64 - half);
+    let mut data = Vec::with_capacity(size * size);
+    for j in 0..size as i64 {
+        for i in 0..size as i64 {
+            let (x, y) = (ox + i, oy + j);
+            let px = if x >= 0 && y >= 0 {
+                layer
+                    .get_pixel(x as u32, y as u32)
+                    .unwrap_or(Rgba8::TRANSPARENT)
+            } else {
+                Rgba8::TRANSPARENT
+            };
+            data.push(px);
+        }
+    }
+    SmudgeBuffer { size, data }
+}
+
+/// Jeden dab rozmazywania: bufor = rate * bufor + (1 - rate) * płótno, potem płótno miesza się z buforem
+/// z kryciem falloff * pokrycie zaznaczenia. `rate` 0..1 — im wyższy, tym dłużej ciągnie się farba.
+#[allow(clippy::too_many_arguments)]
+pub fn smudge_dab(
+    layer: &mut Layer,
+    buf: &mut SmudgeBuffer,
+    cx: f32,
+    cy: f32,
+    radius: f32,
+    hardness: f32,
+    rate: f32,
+    selection: Option<&Selection>,
+) -> Option<Rect> {
+    if buf.size == 0 || buf.data.len() != buf.size * buf.size || radius <= 0.0 {
+        return None;
+    }
+    let rate = rate.clamp(0.0, 1.0);
+    let half = (buf.size / 2) as i64;
+    let (ox, oy) = (cx.round() as i64 - half, cy.round() as i64 - half);
+    let (w, h) = (layer.pixels.width as i64, layer.pixels.height as i64);
+    let mut changed: Option<(u32, u32, u32, u32)> = None;
+    for j in 0..buf.size as i64 {
+        for i in 0..buf.size as i64 {
+            let (x, y) = (ox + i, oy + j);
+            if x < 0 || y < 0 || x >= w || y >= h {
+                continue;
+            }
+            let dist = ((x as f32 + 0.5 - cx).powi(2) + (y as f32 + 0.5 - cy).powi(2)).sqrt();
+            if dist > radius {
+                continue;
+            }
+            let falloff = brush_falloff(dist, radius, hardness) as f32 / 255.0;
+            let cov = selection.map_or(1.0, |s| s.coverage(x as u32, y as u32) as f32 / 255.0);
+            let k = falloff * cov;
+            if k <= 0.0 {
+                continue;
+            }
+            let idx = (j as usize) * buf.size + i as usize;
+            let canvas = layer
+                .get_pixel(x as u32, y as u32)
+                .unwrap_or(Rgba8::TRANSPARENT);
+            let acc = mix_pixels(canvas, buf.data[idx], rate);
+            buf.data[idx] = acc;
+            let out = mix_pixels(canvas, acc, k);
+            if out != canvas {
+                let _ = layer.set_pixel(x as u32, y as u32, out);
+                let (ux, uy) = (x as u32, y as u32);
+                changed = Some(match changed {
+                    None => (ux, uy, ux, uy),
+                    Some((a, b, c, d)) => (a.min(ux), b.min(uy), c.max(ux), d.max(uy)),
+                });
+            }
+        }
+    }
+    changed.map(|(a, b, c, d)| Rect::new(a, b, c - a + 1, d - b + 1))
+}
+
 /// Rozjaśnianie (amount > 0) lub ściemnianie (amount < 0) piksela premultiplied; amount w -1.0..=1.0.
 pub fn dodge_burn_pixel(px: Rgba8, amount: f32) -> Rgba8 {
     if px.a() == 0 {
@@ -287,10 +373,12 @@ pub fn clone_dab(
 }
 
 /// Rozmywanie (amount > 0) lub wyostrzanie (amount < 0) pędzlem w obszarze okręgu o środku (cx, cy).
-/// Wykorzystuje blur_pass do rozmycia małego bufora wokół pędzla i mix_pixels.
+/// Piksele źródłowe i rozmyte wyliczane są ze stanu `source` (z początku pociągnięcia),
+/// a wynik miesza bieżący piksel warstwy z obliczonym pikselem docelowym (`target`).
 #[allow(clippy::too_many_arguments)]
 pub fn blur_sharpen_dab(
     layer: &mut Layer,
+    source: &crate::layer::TiledLayer,
     cx: f32,
     cy: f32,
     radius: f32,
@@ -298,7 +386,13 @@ pub fn blur_sharpen_dab(
     amount: f32,
     selection: Option<&Selection>,
 ) -> Option<Rect> {
-    if radius <= 0.0 || amount == 0.0 || layer.pixels.width == 0 || layer.pixels.height == 0 {
+    if radius <= 0.0
+        || amount == 0.0
+        || layer.pixels.width == 0
+        || layer.pixels.height == 0
+        || source.width != layer.pixels.width
+        || source.height != layer.pixels.height
+    {
         return None;
     }
 
@@ -311,7 +405,7 @@ pub fn blur_sharpen_dab(
         return None;
     }
 
-    // Pobieramy bufor z zapasem 2 px z każdej strony dla splotu gaussa
+    // Pobieramy bufor ze źródła z zapasem 2 px z każdej strony dla splotu gaussa
     let pad = 2i64;
     let bx0 = (x0 - pad).max(0);
     let by0 = (y0 - pad).max(0);
@@ -324,7 +418,7 @@ pub fn blur_sharpen_dab(
     for y in by0..=by1 {
         for x in bx0..=bx1 {
             src_buf.push(
-                layer
+                source
                     .get_pixel(x as u32, y as u32)
                     .unwrap_or(Rgba8::TRANSPARENT),
             );
@@ -369,26 +463,32 @@ pub fn blur_sharpen_dab(
             let blurred = blurred_buf[idx];
 
             let target = if amount_clamped >= 0.0 {
-                // Rozmycie: mieszamy oryginał z rozmytym
-                mix_pixels(orig, blurred, amount_clamped)
+                // Rozmycie: docelowym pikselem jest rozmyty piksel ze źródła
+                blurred
             } else {
-                // Wyostrzanie: unsharp mask: orig + (orig - blurred) * (-amount)
-                let factor = -amount_clamped;
-                let clamp_u8 = |val: f32| val.round().clamp(0.0, 255.0) as u8;
+                // Wyostrzanie: unsharp mask tylko na R,G,B w premultiplied (0..=orig.a), alfa bez zmian
+                // Łagodnie jak w GIMP: siła 0,5 wzmacnia szczegóły 1,25×, pełna siła 1,5× na pociągnięcie
+                // (wcześniej 2×–3×, co po kilku pociągnięciach „wypalało” szum zdjęcia).
+                let s = (-amount_clamped) * 0.5;
+                let max_c = orig.a() as f32;
                 let calc = |o: u8, b: u8| -> u8 {
-                    let diff = o as f32 - b as f32;
-                    clamp_u8(o as f32 + diff * factor)
+                    let o_f = o as f32;
+                    let diff = o_f - b as f32;
+                    (o_f + diff * s).round().clamp(0.0, max_c) as u8
                 };
                 Rgba8::new(
                     calc(orig.r(), blurred.r()),
                     calc(orig.g(), blurred.g()),
                     calc(orig.b(), blurred.b()),
-                    calc(orig.a(), blurred.a()),
+                    orig.a(),
                 )
             };
 
-            let out = mix_pixels(orig, target, k);
-            if out != orig {
+            let cur = layer
+                .get_pixel(x as u32, y as u32)
+                .unwrap_or(Rgba8::TRANSPARENT);
+            let out = mix_pixels(cur, target, k);
+            if out != cur {
                 let _ = layer.set_pixel(x as u32, y as u32, out);
                 let (ux, uy) = (x as u32, y as u32);
                 changed = Some(match changed {
@@ -614,6 +714,35 @@ mod tests {
     }
 
     #[test]
+    fn test_smudge_drags_color() {
+        let mut layer = Layer::new("t", 30, 10);
+        // Wypełnij kolumny x < 8 kolorem (255, 0, 0, 255), pozostałe (255, 255, 255, 255)
+        for y in 0..10 {
+            for x in 0..30 {
+                let color = if x < 8 {
+                    Rgba8::new(255, 0, 0, 255)
+                } else {
+                    Rgba8::new(255, 255, 255, 255)
+                };
+                layer.set_pixel(x, y, color).unwrap();
+            }
+        }
+
+        let mut buf = smudge_begin(&layer, 5.0, 5.0, 3.0);
+        for step in 0..15 {
+            let x = 6.0 + step as f32;
+            smudge_dab(&mut layer, &mut buf, x, 5.0, 3.0, 1.0, 0.8, None);
+        }
+
+        let p = layer.get_pixel(14, 5).unwrap();
+        assert!(p.g() < 200, "kolor nie został przeciągnięty: {:?}", p);
+
+        // Piksel (14, 0) poza pędzlem pozostaje biały
+        let p = layer.get_pixel(14, 0).unwrap();
+        assert_eq!(p, Rgba8::new(255, 255, 255, 255));
+    }
+
+    #[test]
     fn test_dodge_burn_dab() {
         let mut layer = Layer::new("t", 10, 10);
 
@@ -658,22 +787,166 @@ mod tests {
     #[test]
     fn test_blur_sharpen_dab() {
         let mut layer = Layer::new("t", 10, 10);
-        // Single white pixel in the center
+        let dark = Rgba8::new(40, 40, 40, 255);
+        for y in 0..10 {
+            for x in 0..10 {
+                layer.set_pixel(x, y, dark).unwrap();
+            }
+        }
+        // Single white pixel in the center on opaque dark background
         let white = Rgba8::new(255, 255, 255, 255);
         layer.set_pixel(5, 5, white).unwrap();
 
         // Blur dab over the center
-        let rect = blur_sharpen_dab(&mut layer, 5.5, 5.5, 3.0, 1.0, 1.0, None);
+        let source = layer.pixels.clone();
+        let rect = blur_sharpen_dab(&mut layer, &source, 5.5, 5.5, 3.0, 1.0, 1.0, None);
         assert!(rect.is_some());
         // Center pixel should be diffused/blurred (lower than 255)
         let center = layer.get_pixel(5, 5).unwrap();
-        assert!(center.r() < 255 && center.r() > 0);
-        // Neighboring pixel should now have some brightness
+        assert!(center.r() < 255 && center.r() > 40);
+        // Neighboring pixel should now be brighter than the dark background
         let neighbor = layer.get_pixel(4, 5).unwrap();
-        assert!(neighbor.r() > 0);
+        assert!(neighbor.r() > 40);
 
-        // Sharpen dab
-        let rect_sharp = blur_sharpen_dab(&mut layer, 5.5, 5.5, 3.0, 1.0, -1.0, None);
+        // Sharpen dab increases center contrast again
+        let source_sharp = layer.pixels.clone();
+        let rect_sharp =
+            blur_sharpen_dab(&mut layer, &source_sharp, 5.5, 5.5, 3.0, 1.0, -1.0, None);
         assert!(rect_sharp.is_some());
+        assert!(layer.get_pixel(5, 5).unwrap().r() > center.r());
+    }
+
+    #[test]
+    fn test_blur_sharpen_dab_no_runaway_and_premultiplied_clamp() {
+        let mut init_layer = Layer::new("t", 16, 16);
+        for y in 0..16 {
+            for x in 0..16 {
+                let a = if (4..12).contains(&x) && (4..12).contains(&y) {
+                    140u8
+                } else {
+                    40u8
+                };
+                let r = if x == 8 && y == 8 {
+                    130u8
+                } else if (6..=10).contains(&x) && (6..=10).contains(&y) {
+                    70u8
+                } else {
+                    20u8
+                };
+                let g = r / 2;
+                let b = r.saturating_sub(10);
+                init_layer.set_pixel(x, y, Rgba8::new(r, g, b, a)).unwrap();
+            }
+        }
+
+        let source = init_layer.pixels.clone();
+
+        // Pojedynczy dab z k = 1 (hardness = 1.0, brak zaznaczenia)
+        let mut single_layer = init_layer.clone();
+        blur_sharpen_dab(&mut single_layer, &source, 8.5, 8.5, 4.0, 1.0, -0.8, None);
+
+        // 20 dabów w tym samym miejscu z tym samym source (nawet przy częściowym pokryciu zaznaczenia k < 1)
+        let mut sel = Selection::new(16, 16);
+        let mask = vec![128u8; 16 * 16];
+        sel.combine_mask(&mask, crate::selection::SelectMode::Replace);
+
+        let mut multi_layer = init_layer.clone();
+        for _ in 0..20 {
+            blur_sharpen_dab(
+                &mut multi_layer,
+                &source,
+                8.5,
+                8.5,
+                4.0,
+                1.0,
+                -0.8,
+                Some(&sel),
+            );
+        }
+
+        for y in 0..16 {
+            for x in 0..16 {
+                let p_single = single_layer.get_pixel(x, y).unwrap();
+                let p_multi = multi_layer.get_pixel(x, y).unwrap();
+
+                // Dla każdego piksela po wyostrzaniu w premultiplied musi zachodzić r, g, b <= a
+                assert!(p_single.r() <= p_single.a());
+                assert!(p_single.g() <= p_single.a());
+                assert!(p_single.b() <= p_single.a());
+                assert!(p_multi.r() <= p_multi.a());
+                assert!(p_multi.g() <= p_multi.a());
+                assert!(p_multi.b() <= p_multi.a());
+
+                // 20 dabów w tym samym miejscu daje wynik równy pojedynczemu dabowi z k=1 (tolerancja ±2)
+                assert!((p_single.r() as i16 - p_multi.r() as i16).abs() <= 2);
+                assert!((p_single.g() as i16 - p_multi.g() as i16).abs() <= 2);
+                assert!((p_single.b() as i16 - p_multi.b() as i16).abs() <= 2);
+                assert!((p_single.a() as i16 - p_multi.a() as i16).abs() <= 2);
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod sharpen_strength_tests {
+    use super::*;
+    use crate::layer::Layer;
+
+    /// Odsetek pikseli „wypalonych” (kanał 0 lub 255) po `strokes` pociągnięciach wyostrzania.
+    fn burned_after(strokes: usize, amount: f32) -> f32 {
+        let (w, h) = (48u32, 48u32);
+        let mut layer = Layer::new("t", w, h);
+        let mut seed = 12345u32;
+        for y in 0..h {
+            for x in 0..w {
+                seed = seed.wrapping_mul(1103515245).wrapping_add(12345);
+                let n = ((seed >> 16) % 21) as i32 - 10; // szum ±10 jak w JPEG
+                let v = (120 + n) as u8;
+                layer
+                    .set_pixel(
+                        x,
+                        y,
+                        Rgba8::new(v, (v as i32 + 15) as u8, (v as i32 - 20) as u8, 255),
+                    )
+                    .unwrap();
+            }
+        }
+        for _ in 0..strokes {
+            let src = layer.pixels.clone();
+            for k in 0..20 {
+                blur_sharpen_dab(
+                    &mut layer,
+                    &src,
+                    14.0 + k as f32,
+                    24.0,
+                    10.0,
+                    0.8,
+                    -amount,
+                    None,
+                );
+            }
+        }
+        let mut burned = 0;
+        let mut total = 0;
+        for y in 16..32 {
+            for x in 16..32 {
+                let p = layer.get_pixel(x, y).unwrap();
+                for c in [p.r(), p.g(), p.b()] {
+                    total += 1;
+                    if c == 0 || c == 255 {
+                        burned += 1;
+                    }
+                }
+            }
+        }
+        burned as f32 / total as f32
+    }
+
+    #[test]
+    fn repeated_sharpen_strokes_do_not_burn_out_noise() {
+        // 10 pociągnięć w tym samym miejscu przy sile 0,5 na zaszumionym obrazie (jak JPEG)
+        assert!(burned_after(10, 0.5) < 0.02);
+        // pełna siła też nie może po kilku pociągnięciach zamienić zdjęcia w sieczkę
+        assert!(burned_after(3, 1.0) < 0.02);
     }
 }

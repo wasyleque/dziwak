@@ -279,6 +279,9 @@ pub fn render_fg_bg_widget(app: &mut DziwakApp, ui: &mut egui::Ui) {
     if reset_resp.clicked() {
         app.brush_color = egui::Color32::from_rgb(0, 0, 0);
         app.bg_color = egui::Color32::WHITE;
+        if app.is_editing_text() {
+            app.mark_text_preview_dirty();
+        }
     }
     reset_resp.on_hover_text(tr("Domyślne kolory: czarny / biały (D)"));
 
@@ -304,6 +307,9 @@ pub fn render_fg_bg_widget(app: &mut DziwakApp, ui: &mut egui::Ui) {
     );
     if swap_resp.clicked() {
         std::mem::swap(&mut app.brush_color, &mut app.bg_color);
+        if app.is_editing_text() {
+            app.mark_text_preview_dirty();
+        }
     }
     swap_resp.on_hover_text(tr("Zamień kolory (X)"));
 
@@ -392,11 +398,15 @@ pub fn render_left_dock(app: &mut DziwakApp, ctx: &egui::Context) {
             .anchor(egui::Align2::LEFT_TOP, egui::vec2(210.0, 80.0))
             .show(ctx, |ui| match target {
                 ColorPickerTarget::Foreground => {
+                    let prev_fg = app.brush_color;
                     egui::color_picker::color_picker_color32(
                         ui,
                         &mut app.brush_color,
                         egui::color_picker::Alpha::Opaque,
                     );
+                    if app.brush_color != prev_fg && app.is_editing_text() {
+                        app.mark_text_preview_dirty();
+                    }
                 }
                 ColorPickerTarget::Background => {
                     egui::color_picker::color_picker_color32(

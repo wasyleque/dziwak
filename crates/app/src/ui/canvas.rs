@@ -123,23 +123,26 @@ pub fn render_canvas(app: &mut DziwakApp, ctx: &egui::Context, should_fit_to_vie
             let viewport_valid =
                 canvas_viewport_rect.width() > 0.0 && canvas_viewport_rect.height() > 0.0;
             let size_changed =
-                (canvas_viewport_rect.size() - app.last_viewport_size).length() > 0.5;
+                (canvas_viewport_rect.size() - app.doc.last_viewport_size).length() > 0.5;
             if viewport_valid {
                 if should_fit_to_viewport {
-                    app.auto_fit = true;
+                    app.doc.auto_fit = true;
                 }
-                if !app.initialized || should_fit_to_viewport || (app.auto_fit && size_changed) {
+                if !app.doc.initialized
+                    || should_fit_to_viewport
+                    || (app.doc.auto_fit && size_changed)
+                {
                     app.fit_to_viewport(canvas_viewport_rect);
-                    app.initialized = true;
-                } else if app.center_requested {
+                    app.doc.initialized = true;
+                } else if app.doc.center_requested {
                     app.center_canvas(canvas_viewport_rect);
                 }
-                app.center_requested = false;
-                app.last_viewport_size = canvas_viewport_rect.size();
+                app.doc.center_requested = false;
+                app.doc.last_viewport_size = canvas_viewport_rect.size();
             }
 
             // Obszar interaktywny dla całego widoku
-            let (response_rect, _response) =
+            let (response_rect, _canvas_response) =
                 ui.allocate_exact_size(ui.available_size(), egui::Sense::hover());
 
             let (
@@ -162,9 +165,34 @@ pub fn render_canvas(app: &mut DziwakApp, ctx: &egui::Context, should_fit_to_vie
                 )
             });
 
-            let is_hovered = hover_pos.is_some_and(|pos| canvas_viewport_rect.contains(pos));
+            // Płótno reaguje tylko na mysz nad nim, gdy nic go nie zasłania (okna filtrów, menu),
+            // a przeciąganie tylko wtedy, gdy przycisk wciśnięto na płótnie — przeciągnięcie suwaka
+            // w oknie nie może przesuwać obrazu ani malować.
+            // Najwyższa warstwa egui pod kursorem musi być warstwą płótna — okna (filtry, dialogi)
+            // i menu leżą na wyższych warstwach i zasłaniają je.
+            let canvas_layer = ui.layer_id();
+            let over_canvas = hover_pos.is_some_and(|pos| {
+                canvas_viewport_rect.contains(pos)
+                    && ctx.layer_id_at(pos).is_none_or(|l| l == canvas_layer)
+            });
+            let (any_pressed, any_down) = ctx.input(|i| {
+                (
+                    i.pointer.any_pressed(),
+                    i.pointer.button_down(egui::PointerButton::Primary)
+                        || i.pointer.button_down(egui::PointerButton::Middle),
+                )
+            });
+            if any_pressed {
+                app.canvas_owns_pointer = over_canvas;
+            } else if !any_down {
+                app.canvas_owns_pointer = false;
+            }
+            let is_primary_down = is_primary_down && app.canvas_owns_pointer;
+            let is_middle_down = is_middle_down && app.canvas_owns_pointer;
+            let is_primary_pressed = is_primary_pressed && over_canvas;
+            let is_hovered = over_canvas;
             app.cursor_canvas_pos = if is_hovered {
-                hover_pos.map(|pos| app.transform.screen_to_canvas(pos))
+                hover_pos.map(|pos| app.doc.transform.screen_to_canvas(pos))
             } else {
                 None
             };
@@ -176,14 +204,14 @@ pub fn render_canvas(app: &mut DziwakApp, ctx: &egui::Context, should_fit_to_vie
 
             if pan_active && (is_hovered || app.is_panning) {
                 app.is_panning = true;
-                app.transform.pan += pointer_delta;
-                app.auto_fit = false;
+                app.doc.transform.pan += pointer_delta;
+                app.doc.auto_fit = false;
             } else if !pan_active {
                 app.is_panning = false;
             }
 
             // Obsługa pipety (narzędzie Pipeta lub Alt+klik w Pędzlu/Ołówku/Aerografie)
-            let can_sample = app.filter_dialog.is_none()
+            let can_sample = app.doc.filter_dialog.is_none()
                 && (app.active_tool == ActiveTool::Eyedropper
                     || (matches!(
                         app.active_tool,
@@ -195,7 +223,7 @@ pub fn render_canvas(app: &mut DziwakApp, ctx: &egui::Context, should_fit_to_vie
             if can_sample && is_primary_down {
                 if let Some(pos) = hover_pos {
                     if is_hovered {
-                        let canvas_pos = app.transform.screen_to_canvas(pos);
+                        let canvas_pos = app.doc.transform.screen_to_canvas(pos);
                         app.sample_color_at(canvas_pos);
                         ctx.request_repaint();
                     }
@@ -207,59 +235,60 @@ pub fn render_canvas(app: &mut DziwakApp, ctx: &egui::Context, should_fit_to_vie
                 app.active_tool,
                 ActiveTool::Brush | ActiveTool::Pencil | ActiveTool::Airbrush | ActiveTool::Eraser
             );
-            let can_paint = app.filter_dialog.is_none()
+            let can_paint = app.doc.filter_dialog.is_none()
                 && is_brush_like
                 && !space_down
                 && !is_middle_down
                 && !alt_down;
 
             if can_paint {
-                if is_primary_down && (is_hovered || app.is_painting) {
+                if is_primary_down && (is_hovered || app.doc.is_painting) {
                     if let Some(pos) = hover_pos {
-                        let canvas_pos = app.transform.screen_to_canvas(pos);
+                        let canvas_pos = app.doc.transform.screen_to_canvas(pos);
                         let p2 = (canvas_pos.x, canvas_pos.y);
                         let spacing = (app.brush_size * 0.15).max(1.0);
 
-                        if !app.is_painting {
+                        if !app.doc.is_painting {
                             // Początek pociągnięcia: zapisujemy stan w historii raz na pociągnięcie
                             app.push_history();
-                            app.is_painting = true;
+                            app.doc.is_painting = true;
 
                             // Na początku pociągnięcia carry = spacing, aby pierwszy punkt był w p2
-                            app.stroke_carry = spacing;
+                            app.doc.stroke_carry = spacing;
                             app.apply_tool_dab(p2.0, p2.1);
-                            app.last_stroke_pos = Some(p2);
+                            app.doc.last_stroke_pos = Some(p2);
                             if app.active_tool == ActiveTool::Airbrush {
-                                app.last_airbrush_dab = Some(Instant::now());
+                                app.doc.last_airbrush_dab = Some(Instant::now());
                                 ctx.request_repaint_after(Duration::from_millis(50));
                             }
                         } else {
-                            if let Some(p1) = app.last_stroke_pos {
+                            if let Some(p1) = app.doc.last_stroke_pos {
                                 let mut points = Vec::new();
-                                app.stroke_carry = interpolate_stroke(
+                                app.doc.stroke_carry = interpolate_stroke(
                                     p1,
                                     p2,
                                     spacing,
-                                    app.stroke_carry,
+                                    app.doc.stroke_carry,
                                     &mut points,
                                 );
                                 for pt in points {
                                     app.apply_tool_dab(pt.0, pt.1);
                                 }
-                                app.last_stroke_pos = Some(p2);
+                                app.doc.last_stroke_pos = Some(p2);
                             }
 
                             if app.active_tool == ActiveTool::Airbrush {
                                 let now = Instant::now();
-                                let should_dab = match app.last_airbrush_dab {
+                                let should_dab = match app.doc.last_airbrush_dab {
                                     None => true,
                                     Some(t) => now.duration_since(t) >= Duration::from_millis(50),
                                 };
                                 if should_dab {
                                     app.apply_tool_dab(p2.0, p2.1);
-                                    app.last_airbrush_dab = Some(now);
+                                    app.doc.last_airbrush_dab = Some(now);
                                 }
                                 let elapsed = app
+                                    .doc
                                     .last_airbrush_dab
                                     .map(|t| now.duration_since(t))
                                     .unwrap_or_default();
@@ -269,19 +298,19 @@ pub fn render_canvas(app: &mut DziwakApp, ctx: &egui::Context, should_fit_to_vie
                         }
                         ctx.request_repaint();
                     }
-                } else if !is_primary_down && app.is_painting {
-                    app.is_painting = false;
-                    app.last_stroke_pos = None;
-                    app.last_airbrush_dab = None;
+                } else if !is_primary_down && app.doc.is_painting {
+                    app.doc.is_painting = false;
+                    app.doc.last_stroke_pos = None;
+                    app.doc.last_airbrush_dab = None;
                 }
-            } else if app.is_painting {
-                app.is_painting = false;
-                app.last_stroke_pos = None;
-                app.last_airbrush_dab = None;
+            } else if app.doc.is_painting {
+                app.doc.is_painting = false;
+                app.doc.last_stroke_pos = None;
+                app.doc.last_airbrush_dab = None;
             }
 
             // Obsługa klonowania (C): Ctrl+klik = źródło, malowanie LPM kopiuje z przesunięciem (T8)
-            let can_clone = app.filter_dialog.is_none()
+            let can_clone = app.doc.filter_dialog.is_none()
                 && app.active_tool == ActiveTool::Clone
                 && !space_down
                 && !is_middle_down
@@ -291,85 +320,103 @@ pub fn render_canvas(app: &mut DziwakApp, ctx: &egui::Context, should_fit_to_vie
                 let is_ctrl_down = ctx.input(|i| i.modifiers.command);
                 if is_ctrl_down && is_primary_pressed && is_hovered {
                     if let Some(pos) = hover_pos {
-                        let canvas_pos = app.transform.screen_to_canvas(pos);
+                        let canvas_pos = app.doc.transform.screen_to_canvas(pos);
                         app.set_clone_source((canvas_pos.x, canvas_pos.y));
                         ctx.request_repaint();
                     }
-                } else if !is_ctrl_down && app.clone_source.is_some() {
-                    if is_primary_down && (is_hovered || app.is_painting) {
+                } else if !is_ctrl_down && app.doc.clone_source.is_some() {
+                    if is_primary_down && (is_hovered || app.doc.is_painting) {
                         if let Some(pos) = hover_pos {
-                            let canvas_pos = app.transform.screen_to_canvas(pos);
+                            let canvas_pos = app.doc.transform.screen_to_canvas(pos);
                             let p2 = (canvas_pos.x, canvas_pos.y);
                             let spacing = (app.brush_size * 0.15).max(1.0);
 
-                            if !app.is_painting {
-                                app.stroke_carry = spacing;
+                            if !app.doc.is_painting {
+                                app.doc.stroke_carry = spacing;
                                 app.start_clone_stroke(p2);
-                            } else if let Some(p1) = app.last_stroke_pos {
+                            } else if let Some(p1) = app.doc.last_stroke_pos {
                                 let mut points = Vec::new();
-                                app.stroke_carry = interpolate_stroke(
+                                app.doc.stroke_carry = interpolate_stroke(
                                     p1,
                                     p2,
                                     spacing,
-                                    app.stroke_carry,
+                                    app.doc.stroke_carry,
                                     &mut points,
                                 );
                                 for pt in points {
                                     app.apply_clone_dab(pt.0, pt.1);
                                 }
-                                app.last_stroke_pos = Some(p2);
+                                app.doc.last_stroke_pos = Some(p2);
                             }
                             ctx.request_repaint();
                         }
-                    } else if !is_primary_down && app.is_painting {
+                    } else if !is_primary_down && app.doc.is_painting {
                         app.finish_clone_stroke();
                     }
-                } else if !is_primary_down && app.is_painting {
+                } else if !is_primary_down && app.doc.is_painting {
                     app.finish_clone_stroke();
                 }
-            } else if app.is_painting && app.active_tool == ActiveTool::Clone {
+            } else if app.doc.is_painting && app.active_tool == ActiveTool::Clone {
                 app.finish_clone_stroke();
             }
 
             // Obsługa rozmazywania (Shift+S, T9)
-            let can_smudge = app.filter_dialog.is_none()
+            let can_smudge = app.doc.filter_dialog.is_none()
                 && app.active_tool == ActiveTool::Smudge
                 && !space_down
                 && !is_middle_down
                 && !alt_down;
 
             if can_smudge {
-                if is_primary_down && (is_hovered || app.is_painting) {
+                if is_primary_down && (is_hovered || app.doc.is_painting) {
                     if let Some(pos) = hover_pos {
-                        let canvas_pos = app.transform.screen_to_canvas(pos);
+                        let canvas_pos = app.doc.transform.screen_to_canvas(pos);
                         let p2 = (canvas_pos.x, canvas_pos.y);
                         let spacing = (app.brush_size * 0.15).max(1.0);
 
-                        if !app.is_painting {
+                        if !app.doc.is_painting {
                             app.push_history();
-                            app.is_painting = true;
-                            app.stroke_carry = spacing;
-                            app.last_stroke_pos = Some(p2);
-                        } else if let Some(p1) = app.last_stroke_pos {
-                            let mut points = Vec::new();
-                            app.stroke_carry =
-                                interpolate_stroke(p1, p2, spacing, app.stroke_carry, &mut points);
-                            let mut prev = p1;
-                            for pt in points {
-                                app.apply_smudge_dab(pt.0, pt.1, prev.0, prev.1);
-                                prev = pt;
+                            app.doc.is_painting = true;
+                            app.doc.stroke_carry = spacing;
+                            if !app.doc.document.layers.is_empty() {
+                                let layer_idx = app
+                                    .doc
+                                    .active_layer_index
+                                    .min(app.doc.document.layers.len() - 1);
+                                let radius = (app.brush_size * 0.5).max(0.5);
+                                app.doc.smudge_buffer = Some(dziwak_core::brush::smudge_begin(
+                                    &app.doc.document.layers[layer_idx],
+                                    p2.0,
+                                    p2.1,
+                                    radius,
+                                ));
                             }
-                            app.last_stroke_pos = Some(p2);
+                            app.doc.last_stroke_pos = Some(p2);
+                        } else if let Some(p1) = app.doc.last_stroke_pos {
+                            let mut points = Vec::new();
+                            app.doc.stroke_carry = interpolate_stroke(
+                                p1,
+                                p2,
+                                spacing,
+                                app.doc.stroke_carry,
+                                &mut points,
+                            );
+                            for pt in points {
+                                app.apply_smudge_dab(pt.0, pt.1);
+                            }
+                            app.doc.last_stroke_pos = Some(p2);
                         }
                         ctx.request_repaint();
                     }
-                } else if !is_primary_down && app.is_painting {
-                    app.is_painting = false;
-                    app.last_stroke_pos = None;
+                } else if !is_primary_down && app.doc.is_painting {
+                    app.doc.is_painting = false;
+                    app.doc.last_stroke_pos = None;
+                    app.doc.smudge_buffer = None;
                 }
-            } else if app.is_painting && app.active_tool == ActiveTool::Smudge {
-                app.is_painting = false;
-                app.last_stroke_pos = None;
+            } else if app.doc.is_painting && app.active_tool == ActiveTool::Smudge {
+                app.doc.is_painting = false;
+                app.doc.last_stroke_pos = None;
+                app.doc.smudge_buffer = None;
             }
 
             // Obsługa rozjaśniania/ściemniania (Shift+D) oraz rozmywania/wyostrzania (Shift+U)
@@ -377,7 +424,7 @@ pub fn render_canvas(app: &mut DziwakApp, ctx: &egui::Context, should_fit_to_vie
                 app.active_tool,
                 ActiveTool::DodgeBurn | ActiveTool::BlurSharpen
             );
-            let can_dodge_blur = app.filter_dialog.is_none()
+            let can_dodge_blur = app.doc.filter_dialog.is_none()
                 && is_dodge_or_blur
                 && !space_down
                 && !is_middle_down
@@ -385,9 +432,9 @@ pub fn render_canvas(app: &mut DziwakApp, ctx: &egui::Context, should_fit_to_vie
 
             if can_dodge_blur {
                 let invert_mode = ctx.input(|i| i.modifiers.command);
-                if is_primary_down && (is_hovered || app.is_painting) {
+                if is_primary_down && (is_hovered || app.doc.is_painting) {
                     if let Some(pos) = hover_pos {
-                        let canvas_pos = app.transform.screen_to_canvas(pos);
+                        let canvas_pos = app.doc.transform.screen_to_canvas(pos);
                         let p2 = (canvas_pos.x, canvas_pos.y);
                         let spacing = (app.brush_size * 0.15).max(1.0);
 
@@ -399,40 +446,57 @@ pub fn render_canvas(app: &mut DziwakApp, ctx: &egui::Context, should_fit_to_vie
                             }
                         };
 
-                        if !app.is_painting {
+                        if !app.doc.is_painting {
                             app.push_history();
-                            app.is_painting = true;
-                            app.stroke_carry = spacing;
+                            app.doc.is_painting = true;
+                            app.doc.stroke_carry = spacing;
+                            if app.active_tool == ActiveTool::BlurSharpen
+                                && !app.doc.document.layers.is_empty()
+                            {
+                                let layer_idx = app
+                                    .doc
+                                    .active_layer_index
+                                    .min(app.doc.document.layers.len() - 1);
+                                app.doc.blur_sharpen_source =
+                                    Some(app.doc.document.layers[layer_idx].pixels.clone());
+                            }
                             apply_dab(app, p2.0, p2.1);
-                            app.last_stroke_pos = Some(p2);
-                        } else if let Some(p1) = app.last_stroke_pos {
+                            app.doc.last_stroke_pos = Some(p2);
+                        } else if let Some(p1) = app.doc.last_stroke_pos {
                             let mut points = Vec::new();
-                            app.stroke_carry =
-                                interpolate_stroke(p1, p2, spacing, app.stroke_carry, &mut points);
+                            app.doc.stroke_carry = interpolate_stroke(
+                                p1,
+                                p2,
+                                spacing,
+                                app.doc.stroke_carry,
+                                &mut points,
+                            );
                             for pt in points {
                                 apply_dab(app, pt.0, pt.1);
                             }
-                            app.last_stroke_pos = Some(p2);
+                            app.doc.last_stroke_pos = Some(p2);
                         }
                         ctx.request_repaint();
                     }
-                } else if !is_primary_down && app.is_painting {
-                    app.is_painting = false;
-                    app.last_stroke_pos = None;
+                } else if !is_primary_down && app.doc.is_painting {
+                    app.doc.is_painting = false;
+                    app.doc.last_stroke_pos = None;
+                    app.doc.blur_sharpen_source = None;
                 }
-            } else if app.is_painting && is_dodge_or_blur {
-                app.is_painting = false;
-                app.last_stroke_pos = None;
+            } else if app.doc.is_painting && is_dodge_or_blur {
+                app.doc.is_painting = false;
+                app.doc.last_stroke_pos = None;
+                app.doc.blur_sharpen_source = None;
             }
 
             // Obsługa wypełniania kubełkiem (pojedyncze kliknięcie LPM na płótnie)
-            let can_bucket = app.filter_dialog.is_none()
+            let can_bucket = app.doc.filter_dialog.is_none()
                 && app.active_tool == ActiveTool::Bucket
                 && !space_down
                 && !is_middle_down;
 
             // Różdżka: Shift = dodaj, Ctrl = odejmij, Shift+Ctrl = przetnij (jak w GIMP-ie)
-            if app.filter_dialog.is_none()
+            if app.doc.filter_dialog.is_none()
                 && app.active_tool == ActiveTool::MagicWand
                 && !space_down
                 && !is_middle_down
@@ -447,14 +511,14 @@ pub fn render_canvas(app: &mut DziwakApp, ctx: &egui::Context, should_fit_to_vie
                         (false, true) => dziwak_core::selection::SelectMode::Subtract,
                         (false, false) => dziwak_core::selection::SelectMode::Replace,
                     };
-                    let canvas_pos = app.transform.screen_to_canvas(pos);
+                    let canvas_pos = app.doc.transform.screen_to_canvas(pos);
                     app.apply_magic_wand(canvas_pos.x, canvas_pos.y, mode);
                     ctx.request_repaint();
                 }
             }
 
             // Zaznaczenie wg koloru: Shift = dodaj, Ctrl = odejmij, Shift+Ctrl = przetnij (T4)
-            if app.filter_dialog.is_none()
+            if app.doc.filter_dialog.is_none()
                 && app.active_tool == ActiveTool::SelectColor
                 && !space_down
                 && !is_middle_down
@@ -469,7 +533,7 @@ pub fn render_canvas(app: &mut DziwakApp, ctx: &egui::Context, should_fit_to_vie
                         (false, true) => dziwak_core::selection::SelectMode::Subtract,
                         (false, false) => dziwak_core::selection::SelectMode::Replace,
                     };
-                    let canvas_pos = app.transform.screen_to_canvas(pos);
+                    let canvas_pos = app.doc.transform.screen_to_canvas(pos);
                     app.apply_select_by_color(canvas_pos.x, canvas_pos.y, mode);
                     ctx.request_repaint();
                 }
@@ -477,34 +541,106 @@ pub fn render_canvas(app: &mut DziwakApp, ctx: &egui::Context, should_fit_to_vie
 
             if can_bucket && is_primary_pressed && is_hovered {
                 if let Some(pos) = hover_pos {
-                    let canvas_pos = app.transform.screen_to_canvas(pos);
+                    let canvas_pos = app.doc.transform.screen_to_canvas(pos);
                     app.apply_bucket_fill(canvas_pos.x, canvas_pos.y);
                     ctx.request_repaint();
                 }
             }
 
-            // Narzędzie Tekst (T10): kliknięcie na płótnie ustawia pozycję tekstu i otwiera okno
-            if app.filter_dialog.is_none()
+            // Narzędzie Tekst (T10): przeciągnięcie tworzy ramkę, krawędź przesuwa, klik poza ramką zatwierdza
+            if app.active_tool != ActiveTool::Text && app.doc.text_editor.is_some() {
+                app.commit_text();
+            }
+
+            let can_text = app.doc.filter_dialog.is_none()
                 && app.active_tool == ActiveTool::Text
                 && !space_down
-                && !is_middle_down
-                && is_primary_pressed
-                && is_hovered
-            {
-                if let Some(pos) = hover_pos {
-                    let canvas_pos = app.transform.screen_to_canvas(pos);
-                    let (x, y) = (canvas_pos.x.round() as i32, canvas_pos.y.round() as i32);
-                    if let Some(dialog) = &mut app.text_dialog {
-                        dialog.pos = (x, y);
+                && !is_middle_down;
+
+            if can_text {
+                if app.doc.is_moving_text_box {
+                    if is_primary_down {
+                        if let Some(pos) = hover_pos {
+                            let canvas_pos = app.doc.transform.screen_to_canvas(pos);
+                            let new_x = (canvas_pos.x - app.doc.text_move_offset.x).round() as i32;
+                            let new_y = (canvas_pos.y - app.doc.text_move_offset.y).round() as i32;
+                            app.set_text_box_pos(new_x, new_y);
+                            ctx.request_repaint();
+                        }
                     } else {
-                        app.open_text_dialog(x, y);
+                        app.doc.is_moving_text_box = false;
+                        ctx.request_repaint();
                     }
-                    ctx.request_repaint();
+                } else if app.doc.text_drag_start.is_some() {
+                    if is_primary_down {
+                        if let Some(pos) = hover_pos {
+                            app.doc.text_drag_current =
+                                Some(app.doc.transform.screen_to_canvas(pos));
+                            ctx.request_repaint();
+                        }
+                    } else {
+                        let start = app.doc.text_drag_start.take();
+                        let curr = app.doc.text_drag_current.take().or(start);
+                        if let (Some(p1), Some(p2)) = (start, curr) {
+                            let s1 = app.doc.transform.canvas_to_screen(p1);
+                            let s2 = app.doc.transform.canvas_to_screen(p2);
+                            if (s2 - s1).length() < 4.0 {
+                                app.start_text_box(
+                                    p1.x.round() as i32,
+                                    p1.y.round() as i32,
+                                    0.0,
+                                    0.0,
+                                );
+                            } else {
+                                let min_x = p1.x.min(p2.x).round() as i32;
+                                let min_y = p1.y.min(p2.y).round() as i32;
+                                let w = (p2.x - p1.x).abs().round().max(1.0);
+                                let h = (p2.y - p1.y).abs().round().max(1.0);
+                                app.start_text_box(min_x, min_y, w, h);
+                            }
+                            ctx.request_repaint();
+                        }
+                    }
+                } else if is_primary_pressed && is_hovered {
+                    if let Some(pos) = hover_pos {
+                        if let Some(focused_id) = ctx.memory(|m| m.focused()) {
+                            ctx.memory_mut(|m| m.surrender_focus(focused_id));
+                        }
+                        let canvas_pos = app.doc.transform.screen_to_canvas(pos);
+                        if let Some(box_canvas_rect) = app.text_box_canvas_rect() {
+                            let s_min = app.doc.transform.canvas_to_screen(box_canvas_rect.min);
+                            let s_max = app.doc.transform.canvas_to_screen(box_canvas_rect.max);
+                            let screen_rect = egui::Rect::from_min_max(s_min, s_max);
+                            let border = 6.0_f32;
+                            let outer = screen_rect.expand(border);
+                            let inner = screen_rect.shrink(border);
+                            if outer.contains(pos) && (!inner.is_positive() || !inner.contains(pos))
+                            {
+                                if let Some(editor) = &app.doc.text_editor {
+                                    app.doc.is_moving_text_box = true;
+                                    app.doc.text_move_offset = canvas_pos
+                                        - egui::pos2(editor.pos.0 as f32, editor.pos.1 as f32);
+                                }
+                            } else if inner.is_positive() && inner.contains(pos) {
+                                app.set_text_cursor_from_canvas_pos(canvas_pos);
+                            } else {
+                                app.commit_text();
+                            }
+                        } else {
+                            app.doc.text_drag_start = Some(canvas_pos);
+                            app.doc.text_drag_current = Some(canvas_pos);
+                        }
+                        ctx.request_repaint();
+                    }
                 }
+            } else {
+                app.doc.is_moving_text_box = false;
+                app.doc.text_drag_start = None;
+                app.doc.text_drag_current = None;
             }
 
             // Obsługa narzędzia Lupa (Z): klik = powiększ, Alt/Ctrl+klik = pomniejsz, przeciągnięcie = powiększ obszar
-            let can_zoom_tool = app.filter_dialog.is_none()
+            let can_zoom_tool = app.doc.filter_dialog.is_none()
                 && app.active_tool == ActiveTool::Zoom
                 && !space_down
                 && !is_middle_down;
@@ -514,27 +650,27 @@ pub fn render_canvas(app: &mut DziwakApp, ctx: &egui::Context, should_fit_to_vie
                     ctx.input(|i| i.pointer.button_pressed(egui::PointerButton::Secondary));
                 if secondary_pressed && is_hovered {
                     if let Some(pos) = hover_pos {
-                        app.transform.zoom_around(pos, 1.0 / 1.5, 0.05, 64.0);
-                        app.tile_renderer.set_zoom(app.transform.zoom);
-                        app.auto_fit = false;
+                        app.doc.transform.zoom_around(pos, 1.0 / 1.5, 0.05, 64.0);
+                        app.doc.tile_renderer.set_zoom(app.doc.transform.zoom);
+                        app.doc.auto_fit = false;
                         ctx.request_repaint();
                     }
-                } else if is_primary_down && (is_hovered || app.zoom_drag_start.is_some()) {
+                } else if is_primary_down && (is_hovered || app.doc.zoom_drag_start.is_some()) {
                     if let Some(pos) = hover_pos {
-                        if app.zoom_drag_start.is_none() {
-                            app.zoom_drag_start = Some(pos);
+                        if app.doc.zoom_drag_start.is_none() {
+                            app.doc.zoom_drag_start = Some(pos);
                         }
-                        app.zoom_drag_current = Some(pos);
+                        app.doc.zoom_drag_current = Some(pos);
                         ctx.request_repaint();
                     }
-                } else if !is_primary_down && app.zoom_drag_start.is_some() {
-                    let start = app.zoom_drag_start.take();
-                    let curr = app.zoom_drag_current.take().or(start);
+                } else if !is_primary_down && app.doc.zoom_drag_start.is_some() {
+                    let start = app.doc.zoom_drag_start.take();
+                    let curr = app.doc.zoom_drag_current.take().or(start);
                     if let (Some(p1), Some(p2)) = (start, curr) {
                         let drag_dist = (p2 - p1).length();
                         if drag_dist >= 5.0 {
-                            let c1 = app.transform.screen_to_canvas(p1);
-                            let c2 = app.transform.screen_to_canvas(p2);
+                            let c1 = app.doc.transform.screen_to_canvas(p1);
+                            let c2 = app.doc.transform.screen_to_canvas(p2);
                             let min_x = c1.x.min(c2.x);
                             let max_x = c1.x.max(c2.x);
                             let min_y = c1.y.min(c2.y);
@@ -548,52 +684,52 @@ pub fn render_canvas(app: &mut DziwakApp, ctx: &egui::Context, should_fit_to_vie
                             let zoom_out =
                                 alt_down || ctx.input(|i| i.modifiers.command || i.modifiers.ctrl);
                             let factor = if zoom_out { 1.0 / 1.5 } else { 1.5 };
-                            app.transform.zoom_around(p1, factor, 0.05, 64.0);
-                            app.tile_renderer.set_zoom(app.transform.zoom);
-                            app.auto_fit = false;
+                            app.doc.transform.zoom_around(p1, factor, 0.05, 64.0);
+                            app.doc.tile_renderer.set_zoom(app.doc.transform.zoom);
+                            app.doc.auto_fit = false;
                         }
                         ctx.request_repaint();
                     }
                 }
-            } else if app.zoom_drag_start.is_some() {
-                app.zoom_drag_start = None;
-                app.zoom_drag_current = None;
+            } else if app.doc.zoom_drag_start.is_some() {
+                app.doc.zoom_drag_start = None;
+                app.doc.zoom_drag_current = None;
             }
 
             // Obsługa narzędzia Miarka (Shift+M)
-            let can_measure = app.filter_dialog.is_none()
+            let can_measure = app.doc.filter_dialog.is_none()
                 && app.active_tool == ActiveTool::Measure
                 && !space_down
                 && !is_middle_down;
 
             if can_measure {
-                if is_primary_down && (is_hovered || app.is_measuring) {
+                if is_primary_down && (is_hovered || app.doc.is_measuring) {
                     if let Some(pos) = hover_pos {
-                        let canvas_pos = app.transform.screen_to_canvas(pos);
-                        if !app.is_measuring {
-                            app.measure_start = Some(canvas_pos);
-                            app.measure_end = Some(canvas_pos);
-                            app.is_measuring = true;
+                        let canvas_pos = app.doc.transform.screen_to_canvas(pos);
+                        if !app.doc.is_measuring {
+                            app.doc.measure_start = Some(canvas_pos);
+                            app.doc.measure_end = Some(canvas_pos);
+                            app.doc.is_measuring = true;
                         } else {
-                            app.measure_end = Some(canvas_pos);
+                            app.doc.measure_end = Some(canvas_pos);
                         }
                         ctx.request_repaint();
                     }
-                } else if !is_primary_down && app.is_measuring {
-                    app.is_measuring = false;
+                } else if !is_primary_down && app.doc.is_measuring {
+                    app.doc.is_measuring = false;
                     ctx.request_repaint();
                 }
-            } else if app.is_measuring {
-                app.is_measuring = false;
+            } else if app.doc.is_measuring {
+                app.doc.is_measuring = false;
             }
 
             // Narzędzia transformacji (Obrót, Skalowanie, Odbicie): kliknięcie otwiera dialog jeśli jest zamknięty
-            if app.filter_dialog.is_none()
+            if app.doc.filter_dialog.is_none()
                 && matches!(
                     app.active_tool,
                     ActiveTool::Rotate | ActiveTool::Scale | ActiveTool::Flip
                 )
-                && app.transform_dialog.is_none()
+                && app.doc.transform_dialog.is_none()
                 && !space_down
                 && !is_middle_down
                 && is_primary_pressed
@@ -604,56 +740,56 @@ pub fn render_canvas(app: &mut DziwakApp, ctx: &egui::Context, should_fit_to_vie
             }
 
             // Obsługa narzędzia Gradient (przeciągnięcie a -> b)
-            let can_gradient = app.filter_dialog.is_none()
+            let can_gradient = app.doc.filter_dialog.is_none()
                 && app.active_tool == ActiveTool::Gradient
                 && !space_down
                 && !is_middle_down;
 
             if can_gradient {
-                if is_primary_down && (is_hovered || app.gradient_drag_start.is_some()) {
+                if is_primary_down && (is_hovered || app.doc.gradient_drag_start.is_some()) {
                     if let Some(pos) = hover_pos {
-                        let canvas_pos = app.transform.screen_to_canvas(pos);
-                        if app.gradient_drag_start.is_none() {
-                            app.gradient_drag_start = Some(canvas_pos);
+                        let canvas_pos = app.doc.transform.screen_to_canvas(pos);
+                        if app.doc.gradient_drag_start.is_none() {
+                            app.doc.gradient_drag_start = Some(canvas_pos);
                         }
-                        app.gradient_drag_current = Some(canvas_pos);
+                        app.doc.gradient_drag_current = Some(canvas_pos);
                         ctx.request_repaint();
                     }
-                } else if !is_primary_down && app.gradient_drag_start.is_some() {
+                } else if !is_primary_down && app.doc.gradient_drag_start.is_some() {
                     if let (Some(start), Some(curr)) =
-                        (app.gradient_drag_start, app.gradient_drag_current)
+                        (app.doc.gradient_drag_start, app.doc.gradient_drag_current)
                     {
                         app.apply_linear_gradient_between(start, curr);
                     }
-                    app.gradient_drag_start = None;
-                    app.gradient_drag_current = None;
+                    app.doc.gradient_drag_start = None;
+                    app.doc.gradient_drag_current = None;
                     ctx.request_repaint();
                 }
-            } else if app.gradient_drag_start.is_some() {
-                app.gradient_drag_start = None;
-                app.gradient_drag_current = None;
+            } else if app.doc.gradient_drag_start.is_some() {
+                app.doc.gradient_drag_start = None;
+                app.doc.gradient_drag_current = None;
             }
 
             // Obsługa narzędzi zaznaczania (Prostokąt / Elipsa)
-            let can_select = app.filter_dialog.is_none()
+            let can_select = app.doc.filter_dialog.is_none()
                 && (app.active_tool == ActiveTool::SelectRect
                     || app.active_tool == ActiveTool::SelectEllipse)
                 && !space_down
                 && !is_middle_down;
 
             if can_select {
-                if is_primary_down && (is_hovered || app.selection_drag_start.is_some()) {
+                if is_primary_down && (is_hovered || app.doc.selection_drag_start.is_some()) {
                     if let Some(pos) = hover_pos {
-                        let canvas_pos = app.transform.screen_to_canvas(pos);
-                        if app.selection_drag_start.is_none() {
-                            app.selection_drag_start = Some(canvas_pos);
+                        let canvas_pos = app.doc.transform.screen_to_canvas(pos);
+                        if app.doc.selection_drag_start.is_none() {
+                            app.doc.selection_drag_start = Some(canvas_pos);
                         }
-                        app.selection_drag_current = Some(canvas_pos);
+                        app.doc.selection_drag_current = Some(canvas_pos);
                         ctx.request_repaint();
                     }
-                } else if !is_primary_down && app.selection_drag_start.is_some() {
+                } else if !is_primary_down && app.doc.selection_drag_start.is_some() {
                     if let (Some(start), Some(curr)) =
-                        (app.selection_drag_start, app.selection_drag_current)
+                        (app.doc.selection_drag_start, app.doc.selection_drag_current)
                     {
                         let shift_down = ctx.input(|i| i.modifiers.shift);
                         let mut end = curr;
@@ -668,8 +804,8 @@ pub fn render_canvas(app: &mut DziwakApp, ctx: &egui::Context, should_fit_to_vie
 
                         let min_x = start.x.min(end.x).max(0.0);
                         let min_y = start.y.min(end.y).max(0.0);
-                        let max_x = start.x.max(end.x).min(app.document.width as f32);
-                        let max_y = start.y.max(end.y).min(app.document.height as f32);
+                        let max_x = start.x.max(end.x).min(app.doc.document.width as f32);
+                        let max_y = start.y.max(end.y).min(app.doc.document.height as f32);
                         let w = (max_x - min_x).max(0.0);
                         let h = (max_y - min_y).max(0.0);
 
@@ -681,84 +817,85 @@ pub fn render_canvas(app: &mut DziwakApp, ctx: &egui::Context, should_fit_to_vie
 
                             match app.active_tool {
                                 ActiveTool::SelectRect => {
-                                    app.selection.select_rect(ux, uy, uw, uh);
-                                    app.selection_shape = SelectionShape::Rect;
+                                    app.doc.selection.select_rect(ux, uy, uw, uh);
+                                    app.doc.selection_shape = SelectionShape::Rect;
                                 }
                                 ActiveTool::SelectEllipse => {
-                                    app.selection.select_ellipse(ux, uy, uw, uh);
-                                    app.selection_shape = SelectionShape::Ellipse;
+                                    app.doc.selection.select_ellipse(ux, uy, uw, uh);
+                                    app.doc.selection_shape = SelectionShape::Ellipse;
                                 }
                                 _ => {}
                             }
                         } else {
-                            app.selection.clear();
+                            app.doc.selection.clear();
                         }
                     }
-                    app.selection_drag_start = None;
-                    app.selection_drag_current = None;
+                    app.doc.selection_drag_start = None;
+                    app.doc.selection_drag_current = None;
                     ctx.request_repaint();
                 }
-            } else if app.selection_drag_start.is_some() {
-                app.selection_drag_start = None;
-                app.selection_drag_current = None;
+            } else if app.doc.selection_drag_start.is_some() {
+                app.doc.selection_drag_start = None;
+                app.doc.selection_drag_current = None;
             }
 
             // Obsługa narzędzia Przesuwanie (M): przeciąganie przesuwa piksele aktywnej warstwy lub zaznaczenia
-            let can_move = app.filter_dialog.is_none()
+            let can_move = app.doc.filter_dialog.is_none()
                 && app.active_tool == ActiveTool::Move
                 && !space_down
                 && !is_middle_down;
 
             if can_move {
-                if is_primary_down && (is_hovered || app.is_moving) {
+                if is_primary_down && (is_hovered || app.doc.is_moving) {
                     if let Some(pos) = hover_pos {
-                        let canvas_pos = app.transform.screen_to_canvas(pos);
-                        if !app.is_moving {
+                        let canvas_pos = app.doc.transform.screen_to_canvas(pos);
+                        if !app.doc.is_moving {
                             app.start_move(canvas_pos);
-                        } else if let Some(start) = app.move_drag_start {
+                        } else if let Some(start) = app.doc.move_drag_start {
                             let dx = (canvas_pos.x - start.x).round() as i32;
                             let dy = (canvas_pos.y - start.y).round() as i32;
                             app.apply_move_offset(dx, dy);
                         }
                         ctx.request_repaint();
                     }
-                } else if !is_primary_down && app.is_moving {
+                } else if !is_primary_down && app.doc.is_moving {
                     app.finish_move();
                     ctx.request_repaint();
                 }
-            } else if app.is_moving {
+            } else if app.doc.is_moving {
                 app.finish_move();
                 ctx.request_repaint();
             }
 
             // Obsługa narzędzia Kadrowanie (Shift+C): przeciąganie definiuje ramkę kadrowania
-            let can_crop = app.filter_dialog.is_none()
+            let can_crop = app.doc.filter_dialog.is_none()
                 && app.active_tool == ActiveTool::Crop
                 && !space_down
                 && !is_middle_down;
 
             if can_crop {
-                if is_primary_down && (is_hovered || app.crop_drag_start.is_some()) {
+                if is_primary_down && (is_hovered || app.doc.crop_drag_start.is_some()) {
                     if let Some(pos) = hover_pos {
-                        let canvas_pos = app.transform.screen_to_canvas(pos);
-                        if app.crop_drag_start.is_none() {
-                            app.crop_drag_start = Some(canvas_pos);
+                        let canvas_pos = app.doc.transform.screen_to_canvas(pos);
+                        if app.doc.crop_drag_start.is_none() {
+                            app.doc.crop_drag_start = Some(canvas_pos);
                         }
-                        app.crop_drag_current = Some(canvas_pos);
+                        app.doc.crop_drag_current = Some(canvas_pos);
                         ctx.request_repaint();
                     }
-                } else if !is_primary_down && app.crop_drag_start.is_some() {
-                    if let (Some(start), Some(curr)) = (app.crop_drag_start, app.crop_drag_current)
+                } else if !is_primary_down && app.doc.crop_drag_start.is_some() {
+                    if let (Some(start), Some(curr)) =
+                        (app.doc.crop_drag_start, app.doc.crop_drag_current)
                     {
                         let min_x = start.x.min(curr.x).max(0.0);
                         let min_y = start.y.min(curr.y).max(0.0);
-                        let max_x = start.x.max(curr.x).min(app.document.width as f32);
-                        let max_y = start.y.max(curr.y).min(app.document.height as f32);
+                        let max_x = start.x.max(curr.x).min(app.doc.document.width as f32);
+                        let max_y = start.y.max(curr.y).min(app.doc.document.height as f32);
                         let w = (max_x - min_x).max(0.0);
                         let h = (max_y - min_y).max(0.0);
 
                         if w >= 1.0 && h >= 1.0 {
-                            app.crop_rect = Some(dziwak_core::Rect::new(
+                            app.doc.crop_rect = Some(dziwak_core::Rect::new(
                                 min_x.floor() as u32,
                                 min_y.floor() as u32,
                                 w.ceil() as u32,
@@ -766,14 +903,14 @@ pub fn render_canvas(app: &mut DziwakApp, ctx: &egui::Context, should_fit_to_vie
                             ));
                         }
                     }
-                    app.crop_drag_start = None;
-                    app.crop_drag_current = None;
+                    app.doc.crop_drag_start = None;
+                    app.doc.crop_drag_current = None;
                     ctx.request_repaint();
                 }
             }
 
             // Obsługa narzędzia Zaznaczenie odręczne (F): klikane wielokąty / przeciąganie, dwuklik lub Enter zamyka
-            let can_free_select = app.filter_dialog.is_none()
+            let can_free_select = app.doc.filter_dialog.is_none()
                 && app.active_tool == ActiveTool::SelectFree
                 && !space_down
                 && !is_middle_down;
@@ -788,7 +925,7 @@ pub fn render_canvas(app: &mut DziwakApp, ctx: &egui::Context, should_fit_to_vie
                     ctx.request_repaint();
                 } else if is_hovered {
                     if let Some(pos) = hover_pos {
-                        let canvas_pos = app.transform.screen_to_canvas(pos);
+                        let canvas_pos = app.doc.transform.screen_to_canvas(pos);
                         let pt = (canvas_pos.x, canvas_pos.y);
 
                         let mods = ctx.input(|i| i.modifiers);
@@ -801,8 +938,8 @@ pub fn render_canvas(app: &mut DziwakApp, ctx: &egui::Context, should_fit_to_vie
 
                         if is_primary_pressed {
                             let close_to_start =
-                                if let Some(&start) = app.free_select_points.first() {
-                                    if app.free_select_points.len() >= 3 {
+                                if let Some(&start) = app.doc.free_select_points.first() {
+                                    if app.doc.free_select_points.len() >= 3 {
                                         let dx = pt.0 - start.0;
                                         let dy = pt.1 - start.1;
                                         (dx * dx + dy * dy).sqrt() < 8.0
@@ -819,8 +956,8 @@ pub fn render_canvas(app: &mut DziwakApp, ctx: &egui::Context, should_fit_to_vie
                                 app.add_free_select_point(pt, mode);
                             }
                             ctx.request_repaint();
-                        } else if is_primary_down && !app.free_select_points.is_empty() {
-                            if let Some(&last) = app.free_select_points.last() {
+                        } else if is_primary_down && !app.doc.free_select_points.is_empty() {
+                            if let Some(&last) = app.doc.free_select_points.last() {
                                 let dx = pt.0 - last.0;
                                 let dy = pt.1 - last.1;
                                 if (dx * dx + dy * dy).sqrt() >= 3.0 {
@@ -832,28 +969,28 @@ pub fn render_canvas(app: &mut DziwakApp, ctx: &egui::Context, should_fit_to_vie
                     }
                 }
             } else if app.active_tool != ActiveTool::SelectFree
-                && !app.free_select_points.is_empty()
+                && !app.doc.free_select_points.is_empty()
             {
                 app.cancel_free_select();
             }
 
             // Odświeżenie pamięci podręcznej obrysu zaznaczenia przy zmianie rewizji
-            if app.selection_outline_rev != app.selection.revision {
-                app.selection_outline = app.selection.outline_segments();
-                app.selection_outline_rev = app.selection.revision;
+            if app.doc.selection_outline_rev != app.doc.selection.revision {
+                app.doc.selection_outline = app.doc.selection.outline_segments();
+                app.doc.selection_outline_rev = app.doc.selection.revision;
             }
 
             // Animacja maszerujących mrówek (tylko gdy aktywne jest zaznaczenie <= 20000 odcinków lub przeciąganie)
-            let has_active_selection = app.selection.has_selection
-                && !app.selection_outline.is_empty()
-                && app.selection_outline.len() <= 20_000;
-            let is_dragging_selection = app.selection_drag_start.is_some();
+            let has_active_selection = app.doc.selection.has_selection
+                && !app.doc.selection_outline.is_empty()
+                && app.doc.selection_outline.len() <= 20_000;
+            let is_dragging_selection = app.doc.selection_drag_start.is_some();
             let has_crop_overlay = app.active_tool == ActiveTool::Crop
-                && (app.crop_rect.is_some() || app.crop_drag_start.is_some());
+                && (app.doc.crop_rect.is_some() || app.doc.crop_drag_start.is_some());
             let has_free_select =
-                app.active_tool == ActiveTool::SelectFree && !app.free_select_points.is_empty();
+                app.active_tool == ActiveTool::SelectFree && !app.doc.free_select_points.is_empty();
             let has_zoom_drag =
-                app.active_tool == ActiveTool::Zoom && app.zoom_drag_start.is_some();
+                app.active_tool == ActiveTool::Zoom && app.doc.zoom_drag_start.is_some();
             if has_active_selection
                 || is_dragging_selection
                 || has_crop_overlay
@@ -869,7 +1006,7 @@ pub fn render_canvas(app: &mut DziwakApp, ctx: &egui::Context, should_fit_to_vie
             } else if (space_down || app.active_tool == ActiveTool::Pan) && is_hovered {
                 ctx.set_cursor_icon(egui::CursorIcon::Grab);
             } else if app.active_tool == ActiveTool::Move && is_hovered {
-                if app.is_moving {
+                if app.doc.is_moving {
                     ctx.set_cursor_icon(egui::CursorIcon::Grabbing);
                 } else {
                     ctx.set_cursor_icon(egui::CursorIcon::Move);
@@ -890,16 +1027,17 @@ pub fn render_canvas(app: &mut DziwakApp, ctx: &egui::Context, should_fit_to_vie
             if is_hovered {
                 let (scroll, zoom_delta) = ctx.input(|i| (i.smooth_scroll_delta, i.zoom_delta()));
                 if scroll != egui::Vec2::ZERO {
-                    app.transform.pan += scroll;
-                    app.auto_fit = false;
+                    app.doc.transform.pan += scroll;
+                    app.doc.auto_fit = false;
                 }
                 // Łagodniejszy, dokładniejszy zoom: połowa kroku domyślnego egui.
                 let zoom_factor = zoom_delta.powf(0.5);
                 if (zoom_factor - 1.0_f32).abs() > 1e-4 {
                     if let Some(cursor_pos) = hover_pos {
-                        app.transform
+                        app.doc
+                            .transform
                             .zoom_around(cursor_pos, zoom_factor, 0.05, 64.0);
-                        app.auto_fit = false;
+                        app.doc.auto_fit = false;
                     }
                 }
             }
@@ -915,10 +1053,13 @@ pub fn render_canvas(app: &mut DziwakApp, ctx: &egui::Context, should_fit_to_vie
                 egui::Color32::from_rgb(0x26, 0x26, 0x26),
             );
 
-            let canvas_size = egui::vec2(app.document.width as f32, app.document.height as f32);
+            let canvas_size = egui::vec2(
+                app.doc.document.width as f32,
+                app.doc.document.height as f32,
+            );
             let canvas_screen_rect = egui::Rect::from_min_size(
-                egui::pos2(app.transform.pan.x, app.transform.pan.y),
-                canvas_size * app.transform.zoom,
+                egui::pos2(app.doc.transform.pan.x, app.doc.transform.pan.y),
+                canvas_size * app.doc.transform.zoom,
             );
 
             // Cień pod płótnem
@@ -979,16 +1120,33 @@ pub fn render_canvas(app: &mut DziwakApp, ctx: &egui::Context, should_fit_to_vie
                 egui::Color32::WHITE,
             );
 
-            // Aktualizacja tekstur GPU dla brudnych kafli (tylko zmienione kafle są komponowane)
-            app.tile_renderer.set_zoom(app.transform.zoom);
-            app.tile_renderer.update_dirty_tiles(ctx, &app.document);
+            // Jeśli trwa edycja tekstu i zmienił się kolor lub flaga preview_dirty, przerysuj warstwę przed kompozycją kafli
+            if app.doc.text_editor.is_some()
+                && app.ensure_text_editor_valid()
+                && app
+                    .doc
+                    .text_editor
+                    .as_ref()
+                    .is_some_and(|e| e.preview_dirty || e.preview_color != app.brush_color)
+            {
+                app.update_text_preview_data();
+            }
+
+            // Aktualizacja tekstur GPU wyłącznie dla widocznych i brudnych kafli
+            app.doc.tile_renderer.set_zoom(app.doc.transform.zoom);
+            app.doc.tile_renderer.update_visible_dirty_tiles(
+                ctx,
+                &app.doc.document,
+                &app.doc.transform,
+                canvas_viewport_rect,
+            );
 
             // Rysujemy skomponowane kafle dokumentu przesłane na GPU
-            app.tile_renderer.draw_visible_tiles(
+            app.doc.tile_renderer.draw_visible_tiles(
                 &canvas_painter,
-                &app.transform,
-                app.document.width,
-                app.document.height,
+                &app.doc.transform,
+                app.doc.document.width,
+                app.doc.document.height,
                 canvas_viewport_rect,
                 app.show_tile_grid,
             );
@@ -998,7 +1156,7 @@ pub fn render_canvas(app: &mut DziwakApp, ctx: &egui::Context, should_fit_to_vie
             let phase = ((time / 0.150).floor() as i64).rem_euclid(8) as f32;
 
             if let (Some(start), Some(curr)) =
-                (app.selection_drag_start, app.selection_drag_current)
+                (app.doc.selection_drag_start, app.doc.selection_drag_current)
             {
                 let shift_down = ctx.input(|i| i.modifiers.shift);
                 let mut end = curr;
@@ -1013,11 +1171,11 @@ pub fn render_canvas(app: &mut DziwakApp, ctx: &egui::Context, should_fit_to_vie
 
                 let min_x = start.x.min(end.x).max(0.0);
                 let min_y = start.y.min(end.y).max(0.0);
-                let max_x = start.x.max(end.x).min(app.document.width as f32);
-                let max_y = start.y.max(end.y).min(app.document.height as f32);
+                let max_x = start.x.max(end.x).min(app.doc.document.width as f32);
+                let max_y = start.y.max(end.y).min(app.doc.document.height as f32);
 
-                let s_min = app.transform.canvas_to_screen(egui::pos2(min_x, min_y));
-                let s_max = app.transform.canvas_to_screen(egui::pos2(max_x, max_y));
+                let s_min = app.doc.transform.canvas_to_screen(egui::pos2(min_x, min_y));
+                let s_max = app.doc.transform.canvas_to_screen(egui::pos2(max_x, max_y));
                 let drag_screen_rect = egui::Rect::from_min_max(s_min, s_max);
 
                 match app.active_tool {
@@ -1028,19 +1186,21 @@ pub fn render_canvas(app: &mut DziwakApp, ctx: &egui::Context, should_fit_to_vie
                         draw_marching_ants_rect(&canvas_painter, drag_screen_rect, phase);
                     }
                 }
-            } else if app.selection.has_selection {
-                if app.selection_outline_rev != app.selection.revision {
-                    app.selection_outline = app.selection.outline_segments();
-                    app.selection_outline_rev = app.selection.revision;
+            } else if app.doc.selection.has_selection {
+                if app.doc.selection_outline_rev != app.doc.selection.revision {
+                    app.doc.selection_outline = app.doc.selection.outline_segments();
+                    app.doc.selection_outline_rev = app.doc.selection.revision;
                 }
-                let animate = app.selection_outline.len() <= 20_000;
+                let animate = app.doc.selection_outline.len() <= 20_000;
                 let black_stroke = egui::Stroke::new(1.0_f32, egui::Color32::BLACK);
                 let white_stroke = egui::Stroke::new(1.0_f32, egui::Color32::WHITE);
-                for &(x0, y0, x1, y1) in &app.selection_outline {
+                for &(x0, y0, x1, y1) in &app.doc.selection_outline {
                     let p0 = app
+                        .doc
                         .transform
                         .canvas_to_screen(egui::pos2(x0 as f32, y0 as f32));
                     let p1 = app
+                        .doc
                         .transform
                         .canvas_to_screen(egui::pos2(x1 as f32, y1 as f32));
                     let seg_rect = egui::Rect::from_two_pos(p0, p1);
@@ -1068,10 +1228,11 @@ pub fn render_canvas(app: &mut DziwakApp, ctx: &egui::Context, should_fit_to_vie
             }
 
             // Podgląd linii gradientu podczas przeciągania
-            if let (Some(start), Some(curr)) = (app.gradient_drag_start, app.gradient_drag_current)
+            if let (Some(start), Some(curr)) =
+                (app.doc.gradient_drag_start, app.doc.gradient_drag_current)
             {
-                let s_start = app.transform.canvas_to_screen(start);
-                let s_curr = app.transform.canvas_to_screen(curr);
+                let s_start = app.doc.transform.canvas_to_screen(start);
+                let s_curr = app.doc.transform.canvas_to_screen(curr);
 
                 canvas_painter.line_segment(
                     [s_start, s_curr],
@@ -1113,7 +1274,7 @@ pub fn render_canvas(app: &mut DziwakApp, ctx: &egui::Context, should_fit_to_vie
                 )
             {
                 if let Some(pos) = hover_pos {
-                    let r = (app.brush_size * 0.5 * app.transform.zoom).max(1.0);
+                    let r = (app.brush_size * 0.5 * app.doc.transform.zoom).max(1.0);
                     canvas_painter.circle_stroke(
                         pos,
                         r,
@@ -1128,12 +1289,12 @@ pub fn render_canvas(app: &mut DziwakApp, ctx: &egui::Context, should_fit_to_vie
             // Rysowanie ramki kadrowania (T2)
             if app.active_tool == ActiveTool::Crop {
                 let active_crop_rect = if let (Some(start), Some(curr)) =
-                    (app.crop_drag_start, app.crop_drag_current)
+                    (app.doc.crop_drag_start, app.doc.crop_drag_current)
                 {
                     let min_x = start.x.min(curr.x).max(0.0);
                     let min_y = start.y.min(curr.y).max(0.0);
-                    let max_x = start.x.max(curr.x).min(app.document.width as f32);
-                    let max_y = start.y.max(curr.y).min(app.document.height as f32);
+                    let max_x = start.x.max(curr.x).min(app.doc.document.width as f32);
+                    let max_y = start.y.max(curr.y).min(app.doc.document.height as f32);
                     let w = (max_x - min_x).max(0.0);
                     let h = (max_y - min_y).max(0.0);
                     if w >= 1.0 && h >= 1.0 {
@@ -1147,14 +1308,15 @@ pub fn render_canvas(app: &mut DziwakApp, ctx: &egui::Context, should_fit_to_vie
                         None
                     }
                 } else {
-                    app.crop_rect
+                    app.doc.crop_rect
                 };
 
                 if let Some(cr) = active_crop_rect {
                     let s_min = app
+                        .doc
                         .transform
                         .canvas_to_screen(egui::pos2(cr.x as f32, cr.y as f32));
-                    let s_max = app.transform.canvas_to_screen(egui::pos2(
+                    let s_max = app.doc.transform.canvas_to_screen(egui::pos2(
                         (cr.x + cr.width) as f32,
                         (cr.y + cr.height) as f32,
                     ));
@@ -1203,12 +1365,13 @@ pub fn render_canvas(app: &mut DziwakApp, ctx: &egui::Context, should_fit_to_vie
             }
 
             // Rysowanie ścieżki zaznaczenia odręcznego (lasso, T3)
-            if app.active_tool == ActiveTool::SelectFree && !app.free_select_points.is_empty() {
-                let n = app.free_select_points.len();
+            if app.active_tool == ActiveTool::SelectFree && !app.doc.free_select_points.is_empty() {
+                let n = app.doc.free_select_points.len();
                 let screen_pts: Vec<egui::Pos2> = app
+                    .doc
                     .free_select_points
                     .iter()
-                    .map(|&(x, y)| app.transform.canvas_to_screen(egui::pos2(x, y)))
+                    .map(|&(x, y)| app.doc.transform.canvas_to_screen(egui::pos2(x, y)))
                     .collect();
 
                 // Rysujemy linie łączące punkty
@@ -1254,19 +1417,19 @@ pub fn render_canvas(app: &mut DziwakApp, ctx: &egui::Context, should_fit_to_vie
 
             // Rysowanie wskaźnika źródła klonowania (T8)
             if app.active_tool == ActiveTool::Clone {
-                let source_coord = if let Some((dx, dy)) = app.clone_offset {
+                let source_coord = if let Some((dx, dy)) = app.doc.clone_offset {
                     if let Some(pos) = hover_pos {
-                        let cpos = app.transform.screen_to_canvas(pos);
+                        let cpos = app.doc.transform.screen_to_canvas(pos);
                         Some((cpos.x + dx as f32, cpos.y + dy as f32))
                     } else {
-                        app.clone_source
+                        app.doc.clone_source
                     }
                 } else {
-                    app.clone_source
+                    app.doc.clone_source
                 };
 
                 if let Some((sx, sy)) = source_coord {
-                    let sp = app.transform.canvas_to_screen(egui::pos2(sx, sy));
+                    let sp = app.doc.transform.canvas_to_screen(egui::pos2(sx, sy));
                     let r = 8.0_f32;
                     canvas_painter.circle_stroke(
                         sp,
@@ -1295,30 +1458,39 @@ pub fn render_canvas(app: &mut DziwakApp, ctx: &egui::Context, should_fit_to_vie
                 }
             }
 
-            // Podgląd tekstu na płótnie (T10)
-            if let Some(dialog) = &app.text_dialog {
-                if let Some(mask) = &dialog.preview_mask {
-                    let s_min = app
-                        .transform
-                        .canvas_to_screen(egui::pos2(dialog.pos.0 as f32, dialog.pos.1 as f32));
-                    let s_max = app.transform.canvas_to_screen(egui::pos2(
-                        (dialog.pos.0 + mask.width as i32) as f32,
-                        (dialog.pos.1 + mask.height as i32) as f32,
-                    ));
-                    let text_screen_rect = egui::Rect::from_min_max(s_min, s_max);
+            // Podgląd tekstu na żywo na płótnie (T10)
+            if let (Some(start), Some(curr)) = (app.doc.text_drag_start, app.doc.text_drag_current)
+            {
+                let s0 = app.doc.transform.canvas_to_screen(start);
+                let s1 = app.doc.transform.canvas_to_screen(curr);
+                let drag_rect = egui::Rect::from_two_pos(s0, s1);
+                draw_marching_ants_rect(&canvas_painter, drag_rect, phase);
+            }
 
-                    // Ramka przerywana
-                    draw_marching_ants_rect(&canvas_painter, text_screen_rect, phase);
+            if app.doc.text_editor.is_some() && app.ensure_text_editor_valid() {
+                ctx.request_repaint_after(Duration::from_millis(500));
 
-                    // Rysowanie tekstu
-                    let scaled_font_size = (dialog.font_size * app.transform.zoom).max(6.0_f32);
-                    canvas_painter.text(
-                        s_min,
-                        egui::Align2::LEFT_TOP,
-                        &dialog.text,
-                        egui::FontId::proportional(scaled_font_size),
-                        dialog.color,
-                    );
+                if let Some(box_rect) = app.text_box_canvas_rect() {
+                    let s_min = app.doc.transform.canvas_to_screen(box_rect.min);
+                    let s_max = app.doc.transform.canvas_to_screen(box_rect.max);
+                    let frame_screen_rect = egui::Rect::from_min_max(s_min, s_max);
+                    draw_marching_ants_rect(&canvas_painter, frame_screen_rect, phase);
+                }
+
+                let caret_visible = ((time * 2.0).floor() as i64).rem_euclid(2) == 0;
+                if caret_visible {
+                    if let Some((cx, cy0, cy1)) = app.text_caret_canvas_segment() {
+                        let p0 = app.doc.transform.canvas_to_screen(egui::pos2(cx, cy0));
+                        let p1 = app.doc.transform.canvas_to_screen(egui::pos2(cx, cy1));
+                        canvas_painter.line_segment(
+                            [p0, p1],
+                            egui::Stroke::new(2.5_f32, egui::Color32::BLACK),
+                        );
+                        canvas_painter.line_segment(
+                            [p0, p1],
+                            egui::Stroke::new(1.0_f32, egui::Color32::WHITE),
+                        );
+                    }
                 }
             }
 
@@ -1360,10 +1532,10 @@ pub fn render_canvas(app: &mut DziwakApp, ctx: &egui::Context, should_fit_to_vie
                 egui::Stroke::new(1.0_f32, ruler_border),
             );
 
-            let offset_x = app.transform.pan.x - top_ruler_rect.left();
+            let offset_x = app.doc.transform.pan.x - top_ruler_rect.left();
             ruler_ticks(
                 offset_x,
-                app.transform.zoom,
+                app.doc.transform.zoom,
                 top_ruler_rect.width(),
                 &mut app.ruler_ticks_h,
             );
@@ -1412,10 +1584,10 @@ pub fn render_canvas(app: &mut DziwakApp, ctx: &egui::Context, should_fit_to_vie
                 egui::Stroke::new(1.0_f32, ruler_border),
             );
 
-            let offset_y = app.transform.pan.y - left_ruler_rect.top();
+            let offset_y = app.doc.transform.pan.y - left_ruler_rect.top();
             ruler_ticks(
                 offset_y,
-                app.transform.zoom,
+                app.doc.transform.zoom,
                 left_ruler_rect.height(),
                 &mut app.ruler_ticks_v,
             );

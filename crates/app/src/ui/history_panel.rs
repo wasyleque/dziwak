@@ -8,8 +8,8 @@ pub fn render_history_panel(
     ui: &mut egui::Ui,
     should_fit_to_viewport: &mut bool,
 ) {
-    let undo_count = app.history.undo.len();
-    let redo_count = app.history.redo.len();
+    let undo_count = app.doc.history.undo.len();
+    let redo_count = app.doc.history.redo.len();
 
     if undo_count == 0 && redo_count == 0 {
         ui.vertical_centered(|ui| {
@@ -30,7 +30,7 @@ pub fn render_history_panel(
         .max_height(140.0)
         .show(ui, |ui| {
             // Wpisy do cofnięcia (przeszłość)
-            for (idx, _snap) in app.history.undo.iter().enumerate() {
+            for (idx, _snap) in app.doc.history.undo.iter().enumerate() {
                 let label = if idx == 0 {
                     "Stan początkowy".to_string()
                 } else {
@@ -48,7 +48,7 @@ pub fn render_history_panel(
             let _ = ui.selectable_label(true, egui::RichText::new(tr("● Bieżący stan")).strong());
 
             // Wpisy do ponowienia (przyszłość - od najbliższego w dół)
-            for (idx, _snap) in app.history.redo.iter().enumerate().rev() {
+            for (idx, _snap) in app.doc.history.redo.iter().enumerate().rev() {
                 let label = format!("{} {}", tr("Ponów"), idx + 1);
                 let resp = ui.add_enabled(
                     true,
@@ -58,7 +58,7 @@ pub fn render_history_panel(
                     .frame(false),
                 );
                 if resp.clicked() {
-                    target_redo_steps = Some(app.history.redo.len() - idx);
+                    target_redo_steps = Some(app.doc.history.redo.len() - idx);
                 }
             }
         });

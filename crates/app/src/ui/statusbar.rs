@@ -6,7 +6,7 @@ use eframe::egui;
 pub fn render_statusbar(app: &mut DziwakApp, ctx: &egui::Context) {
     egui::TopBottomPanel::bottom("status_panel").show(ctx, |ui| {
         ui.horizontal(|ui| {
-            if app.ai_rx.is_some() {
+            if app.doc.ai_rx.is_some() {
                 ui.spinner();
                 ui.label(tr("AI: usuwanie tła…"));
                 ui.separator();
@@ -37,7 +37,7 @@ pub fn render_statusbar(app: &mut DziwakApp, ctx: &egui::Context) {
             }
 
             // Zoom combo (12.5%..1600%)
-            let current_zoom_pct = format!("{:.0}%", app.transform.zoom * 100.0);
+            let current_zoom_pct = format!("{:.0}%", app.doc.transform.zoom * 100.0);
             egui::ComboBox::from_id_salt("statusbar_zoom_combo")
                 .selected_text(current_zoom_pct)
                 .width(75.0)
@@ -45,10 +45,10 @@ pub fn render_statusbar(app: &mut DziwakApp, ctx: &egui::Context) {
                     let zoom_presets: [f32; 8] = [0.125, 0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 16.0];
                     for z in zoom_presets {
                         let label = format!("{:.1}%", z * 100.0);
-                        let is_selected = (app.transform.zoom - z).abs() < 1e-4;
+                        let is_selected = (app.doc.transform.zoom - z).abs() < 1e-4;
                         if ui.selectable_label(is_selected, label).clicked() {
-                            app.transform.zoom = z;
-                            app.tile_renderer.set_zoom(z);
+                            app.doc.transform.zoom = z;
+                            app.doc.tile_renderer.set_zoom(z);
                         }
                     }
                 });
@@ -57,12 +57,13 @@ pub fn render_statusbar(app: &mut DziwakApp, ctx: &egui::Context) {
             // Rozmiar obrazu: szer. x wys.
             ui.label(format!(
                 "{} × {} px",
-                app.document.width, app.document.height
+                app.doc.document.width, app.doc.document.height
             ));
             ui.separator();
 
             // Pamięć historii: Historia: N MB
-            let mem_mb = app.history.memory_usage(Some(&app.document)) as f64 / (1024.0 * 1024.0);
+            let mem_mb =
+                app.doc.history.memory_usage(Some(&app.doc.document)) as f64 / (1024.0 * 1024.0);
             ui.label(format!("{}: {:.1} MB", tr("Historia"), mem_mb));
             ui.separator();
 

@@ -12,8 +12,72 @@ pub struct TextMask {
     pub data: Vec<u8>,
 }
 
-/// Rasteryzuje `text` (linie rozdzielone \n) czcionką z bajtów `font_data` o wysokości `size_px`. None gdy czcionka jest zła, tekst pusty lub size_px <= 0.
-pub fn rasterize_text(font_data: &[u8], text: &str, size_px: f32) -> Option<TextMask> {
+/// Wyrównanie poziome tekstu w ramce.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum TextAlign {
+    /// Wyrównanie do lewej.
+    #[default]
+    Left,
+    /// Wyśrodkowanie.
+    Center,
+    /// Wyrównanie do prawej.
+    Right,
+}
+
+/// Zwraca pozycje poziome (x w px) kursora dla każdej linii tekstu (rozdzielonej `\n`).
+/// Dla linii o `N` znakach wektor ma `N + 1` elementów (od `0.0` przed pierwszym znakiem).
+pub fn caret_positions(font_data: &[u8], text: &str, size_px: f32) -> Vec<Vec<f32>> {
+    if size_px <= 0.0 {
+        return Vec::new();
+    }
+    let Ok(font) = FontRef::try_from_slice(font_data) else {
+        return Vec::new();
+    };
+    let scale = PxScale::from(size_px);
+    let sf = font.as_scaled(scale);
+
+    text.split('\n')
+        .map(|line| {
+            let mut positions = Vec::with_capacity(line.chars().count() + 1);
+            let mut x = 0.0f32;
+            positions.push(0.0);
+            let mut prev = None;
+            for c in line.chars() {
+                let id = font.glyph_id(c);
+                if let Some(p) = prev {
+                    x += sf.kern(p, id);
+                }
+                x += sf.h_advance(id);
+                prev = Some(id);
+                positions.push(x);
+            }
+            positions
+        })
+        .collect()
+}
+
+/// Zwraca domyślną wysokość linii dla podanej czcionki i rozmiaru `size_px`.
+pub fn font_line_height(font_data: &[u8], size_px: f32) -> f32 {
+    if size_px <= 0.0 {
+        return 0.0;
+    }
+    let Ok(font) = FontRef::try_from_slice(font_data) else {
+        return 0.0;
+    };
+    let sf = font.as_scaled(PxScale::from(size_px));
+    sf.ascent() - sf.descent() + sf.line_gap()
+}
+
+/// Rasteryzuje `text` (linie rozdzielone `\n`) czcionką z bajtów `font_data` o wysokości `size_px`
+/// z uwzględnieniem wyrównania `align`, dodatkowego odstępu linii `line_spacing` i minimalnej szerokości `min_width`.
+pub fn rasterize_text_with_options(
+    font_data: &[u8],
+    text: &str,
+    size_px: f32,
+    align: TextAlign,
+    line_spacing: f32,
+    min_width: f32,
+) -> Option<TextMask> {
     if text.is_empty() || size_px <= 0.0 {
         return None;
     }
@@ -22,17 +86,41 @@ pub fn rasterize_text(font_data: &[u8], text: &str, size_px: f32) -> Option<Text
     let scale = PxScale::from(size_px);
     let sf = font.as_scaled(scale);
 
-    let line_h = sf.ascent() - sf.descent() + sf.line_gap();
+    let base_line_h = sf.ascent() - sf.descent() + sf.line_gap();
+    let step_line_h = (base_line_h + line_spacing).max(1.0);
 
-    // Collect glyphs
+    let carets = caret_positions(font_data, text, size_px);
+    let lines: Vec<&str> = text.split('\n').collect();
+    if lines.is_empty() {
+        return None;
+    }
+
+    let max_line_w = carets
+        .iter()
+        .filter_map(|c| c.last().copied())
+        .fold(0.0f32, f32::max);
+    let box_w = max_line_w.max(min_width.max(0.0));
+
     let mut outlined = Vec::new();
-    let lines: Vec<&str> = text.lines().collect();
-    let mut max_x = 0.0f32;
-    let total_height = lines.len() as f32 * line_h;
+    let total_height = if lines.len() <= 1 {
+        base_line_h
+    } else {
+        (lines.len() - 1) as f32 * step_line_h + base_line_h
+    };
 
     for (li, line) in lines.iter().enumerate() {
-        let mut x = 0.0f32;
-        let base_y = sf.ascent() + li as f32 * line_h;
+        let line_w = carets
+            .get(li)
+            .and_then(|c| c.last().copied())
+            .unwrap_or(0.0);
+        let offset_x = match align {
+            TextAlign::Left => 0.0,
+            TextAlign::Center => ((box_w - line_w) * 0.5).max(0.0),
+            TextAlign::Right => (box_w - line_w).max(0.0),
+        };
+
+        let mut x = offset_x;
+        let base_y = sf.ascent() + li as f32 * step_line_h;
         let mut prev = None;
 
         for c in line.chars() {
@@ -49,17 +137,17 @@ pub fn rasterize_text(font_data: &[u8], text: &str, size_px: f32) -> Option<Text
                 outlined.push(og);
             }
         }
-
-        max_x = max_x.max(x);
     }
 
-    // Calculate dimensions
-    let width = max_x.ceil().max(1.0) as u32;
+    let effective_w = match align {
+        TextAlign::Left => max_line_w,
+        TextAlign::Center | TextAlign::Right => box_w,
+    };
+    let width = effective_w.ceil().max(1.0) as u32;
     let height = total_height.ceil().max(1.0) as u32;
 
     let mut data = vec![0u8; (width * height) as usize];
 
-    // Draw glyphs
     for og in outlined {
         let b = og.px_bounds();
         og.draw(|gx, gy, cov| {
@@ -79,6 +167,11 @@ pub fn rasterize_text(font_data: &[u8], text: &str, size_px: f32) -> Option<Text
         height,
         data,
     })
+}
+
+/// Rasteryzuje `text` (linie rozdzielone \n) czcionką z bajtów `font_data` o wysokości `size_px`. None gdy czcionka jest zła, tekst pusty lub size_px <= 0.
+pub fn rasterize_text(font_data: &[u8], text: &str, size_px: f32) -> Option<TextMask> {
+    rasterize_text_with_options(font_data, text, size_px, TextAlign::Left, 0.0, 0.0)
 }
 
 /// Nanosi maskę na warstwę w pozycji (x, y) kolorem `color` (premultiplied), mieszając normalnie. Zwraca prostokąt zmian.
@@ -212,5 +305,33 @@ mod tests {
             .flat_map(|y| (r.x..r.x + r.width).map(move |x| (x, y)))
             .any(|(x, y)| layer.get_pixel(x, y).is_some_and(|p| p.a() > 200));
         assert!(any_opaque);
+    }
+
+    #[test]
+    fn test_caret_positions_and_options() {
+        assert!(caret_positions(b"bad", "Ab", 24.0).is_empty());
+        assert_eq!(font_line_height(b"bad", 24.0), 0.0);
+
+        let Some(f) = font() else {
+            return;
+        };
+
+        let pos = caret_positions(&f, "Ab\nC\n", 32.0);
+        assert_eq!(pos.len(), 3);
+        assert_eq!(pos[0].len(), 3);
+        assert_eq!(pos[0][0], 0.0);
+        assert!(pos[0][1] > 0.0);
+        assert!(pos[0][2] > pos[0][1]);
+        assert_eq!(pos[1].len(), 2);
+        assert_eq!(pos[1][0], 0.0);
+        assert!(pos[1][1] > 0.0);
+        assert_eq!(pos[2], vec![0.0]);
+
+        let lh = font_line_height(&f, 32.0);
+        assert!(lh >= 32.0);
+
+        let m_right =
+            rasterize_text_with_options(&f, "A", 32.0, TextAlign::Right, 10.0, 120.0).unwrap();
+        assert_eq!(m_right.width, 120);
     }
 }

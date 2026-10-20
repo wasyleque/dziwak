@@ -268,6 +268,13 @@ impl History {
         self.memory_usage(Some(doc))
     }
 
+    /// Zmienia limit pamięci historii w locie (np. wspólny budżet dzielony między zakładki)
+    /// i od razu usuwa najstarsze migawki, jeśli historia go przekracza.
+    pub fn set_max_bytes(&mut self, max_bytes: usize, current_doc: Option<&Document>) {
+        self.max_bytes = max_bytes;
+        self.enforce_memory_limit(current_doc);
+    }
+
     /// Usuwa najstarsze migawki z historii, jeśli przekroczony jest limit `max_bytes`.
     fn enforce_memory_limit(&mut self, current_doc: Option<&Document>) {
         while self.memory_usage(current_doc) > self.max_bytes && !self.undo.is_empty() {
@@ -499,5 +506,36 @@ mod tests {
         assert_eq!(doc.layers[0].name, "Tło");
         assert!((doc.layers[0].opacity - 0.5).abs() < 1e-5);
         assert!(doc.layers[0].visible);
+    }
+
+    #[test]
+    fn test_set_max_bytes_trims_oldest() {
+        let mut doc = Document::with_default_layer(320, 64, "Warstwa");
+        let mut h = History::new(usize::MAX);
+
+        // Wykonaj 5 zmian, każda w innym kaflu (by uniknąć współdzielenia kafli)
+        for i in 0..5 {
+            doc.layers[0]
+                .set_pixel(i * 64, 0, Rgba8([i as u8, 0, 0, 255]))
+                .unwrap();
+            h.push(&doc);
+        }
+
+        let before = h.undo.len();
+        assert_eq!(before, 5);
+
+        // Ustaw limit na 0 - wszystkie migawki powinny zostać usunięte
+        h.set_max_bytes(0, Some(&doc));
+        assert_eq!(
+            h.memory_usage(Some(&doc)),
+            0,
+            "limit 0 powinien usunąć migawki zajmujące pamięć"
+        );
+
+        // Ustaw limit na MAX - nic się nie zmienia
+        let usage_before = h.memory_usage(Some(&doc));
+        h.set_max_bytes(usize::MAX, Some(&doc));
+        let usage_after = h.memory_usage(Some(&doc));
+        assert_eq!(usage_before, usage_after);
     }
 }

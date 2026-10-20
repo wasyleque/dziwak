@@ -14,12 +14,14 @@ Około 100 MB RAM, 0% CPU w bezczynności, bez wymagań co do karty graficznej.
 - **Edycja:** wyczyść zaznaczenie (Delete), wypełnij kolorem pierwszoplanowym / tła
 - **Malowanie:** pędzel, ołówek, aerograf, gumka, kubełek, gradient, klonowanie, rozmazywanie, rozjaśnianie/ściemnianie, rozmywanie/wyostrzanie
 - **Przekształcenia:** przesuwanie, kadrowanie, obrót, skalowanie, odbicie; skalowanie obrazu i rozmiar płótna
-- **Tekst:** czcionki systemowe (przez fontconfig), tekst na nowej warstwie
+- **Tekst:** jak w GIMP — przeciągasz ramkę i piszesz bezpośrednio na obrazie; warstwa tekstowa powstaje od razu; czcionki systemowe, rozmiar, kolor, wyrównanie, odstęp linii
+- **Zakładki:** wiele obrazów naraz (Ctrl+O, kilka plików w dialogu albo `dziwak a.png b.png`), każdy z własnymi warstwami, historią, zaznaczeniem i widokiem; nieaktywne zakładki zwalniają pamięć karty graficznej, historia cofania ma jeden wspólny limit pamięci
 - **Filtry z podglądem:** jasność/kontrast, odcień/nasycenie, rozmycie Gaussa, wyostrzanie
 - **Usuwanie tła:** jednolitego (od krawędzi) oraz AI (U²-Net-p lokalnie na CPU, ok. 1–2 s, bez GPU)
 - **Pliki:** PNG, JPEG, WebP oraz własny format `.dziwak` (warstwy, kompresja LZ4)
 - **Interfejs:** układ GIMP 2.10 Dark z akcentem z motywu Omarchy; język polski, angielski, hiszpański (Edycja → Język)
 - Cofanie i ponawianie z limitem pamięci (migawki kafli copy-on-write)
+- Pytanie o zapis przy zamykaniu zakładki i programu (także Super+W w Hyprland); przyczyna ewentualnej awarii trafia do `~/.cache/dziwak/crash.log`
 
 ## Budowanie
 
@@ -59,12 +61,15 @@ Narzędzia mają skróty jak w GIMP 2.10.
 | Shift+R | Obrót | Shift+S | Rozmazywanie |
 | Shift+T | Skalowanie | Shift+D | Rozjaśnianie/Ściemnianie |
 | Shift+F | Odbicie | Shift+U | Rozmywanie/Wyostrzanie |
-| O | Pipeta | T | Tekst |
+| O | Pipeta | T | Tekst (ramka na obrazie; Ctrl+Enter = zatwierdź, Esc = anuluj) |
 | Z | Lupa | Shift+M | Miarka |
 
 | Skrót | Działanie |
 |---|---|
-| Ctrl+O / Ctrl+Shift+S | Otwórz / Zapisz jako |
+| Ctrl+O / Ctrl+Shift+S | Otwórz (w nowej zakładce) / Zapisz jako |
+| Ctrl+Tab / Ctrl+Shift+Tab | Następna / poprzednia zakładka |
+| Ctrl+W | Zamknij zakładkę (środkowy przycisk na zakładce też) |
+| Ctrl+Q | Zakończ program (pyta o niezapisane obrazy) |
 | Ctrl+Z / Ctrl+Shift+Z, Ctrl+Y | Cofnij / Ponów |
 | Ctrl+A / Ctrl+Shift+A / Ctrl+I | Zaznacz wszystko / Odznacz / Odwróć zaznaczenie |
 | Delete | Wyczyść zaznaczenie (bez zaznaczenia: całą warstwę) |
