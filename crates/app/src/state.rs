@@ -671,6 +671,10 @@ pub struct DziwakApp {
     pub active_tool: ActiveTool,
     /// Maska aktywnego zaznaczenia.
     pub selection: Selection,
+    /// Pamięć podręczna odcinków obrysu zaznaczenia (maszerujące mrówki).
+    pub selection_outline: Vec<(u32, u32, u32, u32)>,
+    /// Numer rewizji zaznaczenia, dla którego wyliczono `selection_outline`.
+    pub selection_outline_rev: u64,
     /// Kształt ostatnio wybranego zaznaczenia (prostokąt lub elipsa).
     pub selection_shape: SelectionShape,
     /// Punkt początkowy przeciągania zaznaczenia w współrzędnych płótna (x, y).
@@ -905,6 +909,8 @@ impl DziwakApp {
             error_message: None,
             active_tool: ActiveTool::Brush,
             selection,
+            selection_outline: Vec::new(),
+            selection_outline_rev: 0,
             selection_shape: SelectionShape::Rect,
             selection_drag_start: None,
             selection_drag_current: None,
@@ -1760,6 +1766,73 @@ impl DziwakApp {
             self.mark_rect_dirty(rect);
             self.bump_layer_version(layer_idx);
         }
+    }
+
+    /// Czyści aktywną warstwę w obrębie zaznaczenia (lub całą warstwę, gdy brak zaznaczenia): Edycja → Wyczyść (Delete).
+    pub fn clear_selection_or_layer(&mut self) {
+        if self.document.layers.is_empty() {
+            return;
+        }
+        let w = self.document.width as usize;
+        let h = self.document.height as usize;
+        if w == 0 || h == 0 {
+            return;
+        }
+        let layer_idx = self.active_layer_index.min(self.document.layers.len() - 1);
+        let mut keep = vec![0u8; w * h];
+        if self.selection.has_selection {
+            for y in 0..h {
+                for x in 0..w {
+                    keep[y * w + x] = 255 - self.selection.coverage(x as u32, y as u32);
+                }
+            }
+        }
+        self.push_history();
+        if let Some(rect) =
+            dziwak_core::fill::mask_alpha(&mut self.document.layers[layer_idx], &keep)
+        {
+            self.mark_rect_dirty(rect);
+            self.bump_layer_version(layer_idx);
+        }
+    }
+
+    /// Wypełnia zaznaczenie (lub całą aktywną warstwę, gdy brak zaznaczenia) wskazanym kolorem.
+    pub fn fill_selection_with_color(&mut self, c: egui::Color32) {
+        if self.document.layers.is_empty() {
+            return;
+        }
+        let w = self.document.width as usize;
+        let h = self.document.height as usize;
+        if w == 0 || h == 0 {
+            return;
+        }
+        let layer_idx = self.active_layer_index.min(self.document.layers.len() - 1);
+        let mut mask = vec![255u8; w * h];
+        if self.selection.has_selection {
+            for y in 0..h {
+                for x in 0..w {
+                    mask[y * w + x] = self.selection.coverage(x as u32, y as u32);
+                }
+            }
+        }
+        let color = Rgba8::from_straight(c.r(), c.g(), c.b(), c.a());
+        self.push_history();
+        if let Some(rect) =
+            dziwak_core::fill::apply_fill(&mut self.document.layers[layer_idx], &mask, color, None)
+        {
+            self.mark_rect_dirty(rect);
+            self.bump_layer_version(layer_idx);
+        }
+    }
+
+    /// Wypełnia zaznaczenie (lub całą aktywną warstwę) kolorem pierwszoplanowym: Edycja → Wypełnij kolorem pierwszoplanowym (Ctrl+,).
+    pub fn fill_with_fg_color(&mut self) {
+        self.fill_selection_with_color(self.brush_color);
+    }
+
+    /// Wypełnia zaznaczenie (lub całą aktywną warstwę) kolorem tła: Edycja → Wypełnij kolorem tła (Ctrl+.).
+    pub fn fill_with_bg_color(&mut self) {
+        self.fill_selection_with_color(self.bg_color);
     }
 
     /// Rozpoczyna operację przesuwania aktywnej warstwy lub zawartości zaznaczenia (narzędzie Move, M).
@@ -4339,5 +4412,74 @@ mod tests {
         let mid = app.layer_versions.clone();
         app.move_active_layer_down();
         assert_ne!(app.layer_versions[0], mid[0]);
+    }
+
+    #[test]
+    fn test_clear_with_rect_selection_clears_only_center() {
+        let mut app = DziwakApp::new();
+        app.active_layer_index = 0; // Warstwa 0 jest cała biała
+
+        app.selection.select_rect(10, 10, 20, 20);
+        app.clear_selection_or_layer();
+
+        // Środek zaznaczenia jest wyczyszczony (przezroczysty)
+        assert_eq!(
+            app.document.layers[0].get_pixel(15, 15),
+            Some(Rgba8::TRANSPARENT)
+        );
+        // Piksele poza zaznaczeniem pozostają białe
+        assert_eq!(app.document.layers[0].get_pixel(0, 0), Some(Rgba8::WHITE));
+        assert_eq!(app.document.layers[0].get_pixel(50, 50), Some(Rgba8::WHITE));
+
+        // Undo przywraca wyczyszczony środek
+        let _ = app.handle_undo();
+        assert_eq!(app.document.layers[0].get_pixel(15, 15), Some(Rgba8::WHITE));
+    }
+
+    #[test]
+    fn test_clear_without_selection_clears_entire_layer() {
+        let mut app = DziwakApp::new();
+        app.active_layer_index = 0; // Warstwa 0 jest cała biała
+        app.selection.clear();
+        assert!(!app.selection.has_selection);
+
+        app.clear_selection_or_layer();
+
+        assert_eq!(
+            app.document.layers[0].get_pixel(0, 0),
+            Some(Rgba8::TRANSPARENT)
+        );
+        assert_eq!(
+            app.document.layers[0].get_pixel(400, 300),
+            Some(Rgba8::TRANSPARENT)
+        );
+        assert_eq!(
+            app.document.layers[0].get_pixel(799, 599),
+            Some(Rgba8::TRANSPARENT)
+        );
+
+        let _ = app.handle_undo();
+        assert_eq!(app.document.layers[0].get_pixel(0, 0), Some(Rgba8::WHITE));
+    }
+
+    #[test]
+    fn test_fill_fg_and_bg_fills_only_selection() {
+        let mut app = DziwakApp::new();
+        app.active_layer_index = 0;
+        app.brush_color = egui::Color32::from_rgb(200, 40, 60);
+        app.bg_color = egui::Color32::from_rgb(10, 120, 220);
+
+        app.selection.select_rect(20, 20, 15, 15);
+        app.fill_with_fg_color();
+
+        let expected_fg = Rgba8::from_straight(200, 40, 60, 255);
+        assert_eq!(app.document.layers[0].get_pixel(25, 25), Some(expected_fg));
+        assert_eq!(app.document.layers[0].get_pixel(5, 5), Some(Rgba8::WHITE));
+        assert_eq!(app.document.layers[0].get_pixel(50, 50), Some(Rgba8::WHITE));
+
+        app.fill_with_bg_color();
+        let expected_bg = Rgba8::from_straight(10, 120, 220, 255);
+        assert_eq!(app.document.layers[0].get_pixel(25, 25), Some(expected_bg));
+        assert_eq!(app.document.layers[0].get_pixel(5, 5), Some(Rgba8::WHITE));
     }
 }

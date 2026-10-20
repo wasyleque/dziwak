@@ -10,6 +10,11 @@ use std::sync::Arc;
 use crate::document::Rect;
 use crate::tile::{TILE_PIXELS, TILE_SIZE};
 
+static NEXT_REVISION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+fn next_revision() -> u64 {
+    NEXT_REVISION.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+}
+
 /// Sposób łączenia nowego zaznaczenia z istniejącym (jak w GIMP: Shift = dodaj, Ctrl = odejmij, Shift+Ctrl = przetnij).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SelectMode {
@@ -45,6 +50,8 @@ pub struct Selection {
     /// Flaga informująca, czy istnieje aktywne zaznaczenie.
     /// `false` oznacza brak zaznaczenia (cały obraz jest edytowalny, coverage = 255).
     pub has_selection: bool,
+    /// Unikalny numer stanu zaznaczenia — zmienia się przy każdej modyfikacji (cache obrysu w UI).
+    pub revision: u64,
 }
 
 impl Selection {
@@ -67,6 +74,7 @@ impl Selection {
             height,
             tiles: vec![None; total_tiles],
             has_selection: false,
+            revision: next_revision(),
         }
     }
 
@@ -128,12 +136,14 @@ impl Selection {
 
     /// Czyści zaznaczenie, przywracając stan "brak zaznaczenia = cały obraz".
     pub fn clear(&mut self) {
+        self.revision = next_revision();
         self.has_selection = false;
         self.tiles.fill(None);
     }
 
     /// Tworzy zaznaczenie prostokątne o lewym górnym rogu w `(x, y)` i wymiarach `width × height`.
     pub fn select_rect(&mut self, x: u32, y: u32, width: u32, height: u32) {
+        self.revision = next_revision();
         self.has_selection = true;
         self.tiles.fill(None);
 
@@ -188,6 +198,7 @@ impl Selection {
 
     /// Tworzy zaznaczenie eliptyczne wpisane w prostokąt `(x, y, width, height)` z antyaliasingiem krawędzi.
     pub fn select_ellipse(&mut self, x: u32, y: u32, width: u32, height: u32) {
+        self.revision = next_revision();
         self.has_selection = true;
         self.tiles.fill(None);
 
@@ -274,6 +285,7 @@ impl Selection {
 
     /// Odwraca zaznaczenie (krycie staje się 255 - krycie).
     pub fn invert(&mut self) {
+        self.revision = next_revision();
         if !self.has_selection {
             self.has_selection = true;
             self.tiles.fill(None);
@@ -403,6 +415,7 @@ impl Selection {
 
     /// Łączy maskę `mask` (długość width*height, wartości 0..=255) z bieżącym zaznaczeniem.
     pub fn combine_mask(&mut self, mask: &[u8], mode: SelectMode) {
+        self.revision = next_revision();
         if mask.len() != (self.width * self.height) as usize {
             return;
         }
@@ -464,6 +477,55 @@ impl Selection {
 
         self.tiles = new_tiles;
         self.has_selection = self.tiles.iter().any(|t| t.is_some());
+    }
+
+    /// Obrys zaznaczenia: krawędzie między pikselami zaznaczonymi (coverage >= 128) a niezaznaczonymi
+    /// (poza obrazem = niezaznaczone), sklejone w maksymalne odcinki poziome i pionowe.
+    /// Każdy element to (x0, y0, x1, y1) we współrzędnych narożników pikseli. Brak zaznaczenia = pusty wektor.
+    pub fn outline_segments(&self) -> Vec<(u32, u32, u32, u32)> {
+        let mut out = Vec::new();
+        if !self.has_selection || self.width == 0 || self.height == 0 {
+            return out;
+        }
+        let (w, h) = (self.width, self.height);
+        let inside = |x: i64, y: i64| -> bool {
+            x >= 0
+                && y >= 0
+                && (x as u32) < w
+                && (y as u32) < h
+                && self.coverage(x as u32, y as u32) >= 128
+        };
+        // krawędzie poziome na linii y (między wierszem y-1 a y)
+        for y in 0..=h as i64 {
+            let mut start: Option<u32> = None;
+            for x in 0..=w as i64 {
+                let edge = x < w as i64 && inside(x, y - 1) != inside(x, y);
+                match (edge, start) {
+                    (true, None) => start = Some(x as u32),
+                    (false, Some(s)) => {
+                        out.push((s, y as u32, x as u32, y as u32));
+                        start = None;
+                    }
+                    _ => {}
+                }
+            }
+        }
+        // krawędzie pionowe na linii x (między kolumną x-1 a x)
+        for x in 0..=w as i64 {
+            let mut start: Option<u32> = None;
+            for y in 0..=h as i64 {
+                let edge = y < h as i64 && inside(x - 1, y) != inside(x, y);
+                match (edge, start) {
+                    (true, None) => start = Some(y as u32),
+                    (false, Some(s)) => {
+                        out.push((x as u32, s, x as u32, y as u32));
+                        start = None;
+                    }
+                    _ => {}
+                }
+            }
+        }
+        out
     }
 }
 
@@ -644,5 +706,21 @@ mod tests {
         let mask6 = vec![0u8; 50 * 50]; // Zła długość
         sel5.combine_mask(&mask6, SelectMode::Replace);
         assert!(!sel5.has_selection); // Powinno pozostać bez zmian
+    }
+
+    #[test]
+    fn test_outline_and_revision() {
+        let mut s = Selection::new(10, 10);
+        let r0 = s.revision;
+        s.select_rect(2, 3, 4, 2);
+        assert_ne!(s.revision, r0);
+        let seg = s.outline_segments();
+        assert_eq!(seg.len(), 4);
+        assert!(seg.contains(&(2, 3, 6, 3)));
+        assert!(seg.contains(&(2, 5, 6, 5)));
+        assert!(seg.contains(&(2, 3, 2, 5)));
+        assert!(seg.contains(&(6, 3, 6, 5)));
+        s.clear();
+        assert!(s.outline_segments().is_empty());
     }
 }

@@ -165,6 +165,21 @@ pub fn render_app(app: &mut DziwakApp, ctx: &egui::Context, _frame: &mut eframe:
         if ctx.input_mut(|i| i.consume_key(egui::Modifiers::SHIFT, egui::Key::M)) {
             app.active_tool = ActiveTool::Measure;
         }
+
+        // Wyczyść: Delete
+        if ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Delete)) {
+            app.clear_selection_or_layer();
+        }
+
+        // Wypełnij kolorem pierwszoplanowym: Ctrl+,
+        if ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::Comma)) {
+            app.fill_with_fg_color();
+        }
+
+        // Wypełnij kolorem tła: Ctrl+.
+        if ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::Period)) {
+            app.fill_with_bg_color();
+        }
     }
 
     // Skróty zaznaczenia: Ctrl+Shift+A (Odznacz), Ctrl+A (Zaznacz wszystko), Ctrl+I (Odwróć)

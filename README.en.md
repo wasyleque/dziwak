@@ -2,15 +2,16 @@
 
 [Polski](README.md) | **English**
 
-Lightweight raster image editor written in Rust for Omarchy Linux (Wayland/Hyprland), with a GIMP 2.10-style interface.
+Lightweight raster image editor written in Rust with a GIMP 2.10-style interface — for Linux (Omarchy, Wayland/Hyprland) and Windows 10/11.
 License: GPL-3.0-or-later.
 
 Approximately 100 MB RAM, 0% CPU when idle, no graphics card requirements.
 
 ## Features
 
-- **Layers:** opacity, 6 blend modes, thumbnails
-- **Selections:** rectangular, elliptical, freehand (lasso), fuzzy select, by color; combining (Shift = add, Ctrl = subtract, Shift+Ctrl = intersect)
+- **Layers:** opacity, 6 blend modes, thumbnails, right-click menu (merge down, alpha to selection, color to alpha, flatten)
+- **Selections:** rectangular, elliptical, freehand (lasso), fuzzy select, by color; combining (Shift = add, Ctrl = subtract, Shift+Ctrl = intersect); marching-ants outline following the real shape
+- **Edit:** clear selection (Delete), fill with foreground / background color
 - **Painting:** brush, pencil, airbrush, eraser, bucket fill, gradient, clone, smudge, dodge/burn, blur/sharpen
 - **Transformations:** move, crop, rotate, scale, flip; image scaling and canvas size
 - **Text:** system fonts (via fontconfig), text on a new layer
@@ -31,6 +32,10 @@ cargo run -p dziwak --release
 AI-free version (smaller binary, faster build): `cargo build --release -p dziwak --no-default-features`.
 
 ## Installation
+
+**Windows 10/11:** download `dziwak-…-windows-x64.zip` from [Releases](https://github.com/wasyleque/dziwak/releases), extract and run `dziwak.exe` (portable, no installation; keep the `models` folder next to it).
+
+**Linux:**
 
 ```bash
 scripts/install-local.sh
@@ -62,10 +67,13 @@ Tools have shortcuts like in GIMP 2.10.
 | Ctrl+O / Ctrl+Shift+S | Open / Save As |
 | Ctrl+Z / Ctrl+Shift+Z, Ctrl+Y | Undo / Redo |
 | Ctrl+A / Ctrl+Shift+A / Ctrl+I | Select All / Deselect / Invert Selection |
+| Delete | Clear selection (no selection: whole layer) |
+| Ctrl+, / Ctrl+. | Fill with FG / BG color |
 | X / D | Swap Colors / Default Colors |
 | Tab | Show/Hide docks |
 | Shift+J / Shift+Ctrl+J | Center Image / Fit to Window |
-| Mouse Wheel | Zoom around cursor |
+| Mouse Wheel / Shift+Wheel | Scroll up–down / left–right |
+| Ctrl+Wheel | Zoom around cursor |
 | Middle Button, Space+LMB | Pan view |
 
 ## Architecture

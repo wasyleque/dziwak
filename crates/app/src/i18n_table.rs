@@ -528,4 +528,15 @@ pub static TABLE: &[(&str, &str, &str)] = &[
         "Removes the foreground color (tolerance as Bucket Fill)",
         "Elimina el color de primer plano (tolerancia como Relleno)",
     ),
+    ("Wyczyść", "Clear", "Borrar"),
+    (
+        "Wypełnij kolorem pierwszoplanowym",
+        "Fill with FG Color",
+        "Rellenar con color de frente",
+    ),
+    (
+        "Wypełnij kolorem tła",
+        "Fill with BG Color",
+        "Rellenar con color de fondo",
+    ),
 ];

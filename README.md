@@ -2,15 +2,16 @@
 
 **Polski** | [English](README.en.md)
 
-Lekki edytor grafiki rastrowej w Ruście dla Omarchy Linux (Wayland/Hyprland), z interfejsem w stylu GIMP 2.10.
+Lekki edytor grafiki rastrowej w Ruście z interfejsem w stylu GIMP 2.10 — dla Linuksa (Omarchy, Wayland/Hyprland) i Windows 10/11.
 Licencja GPL-3.0-or-later.
 
 Około 100 MB RAM, 0% CPU w bezczynności, bez wymagań co do karty graficznej.
 
 ## Możliwości
 
-- **Warstwy:** krycie, 6 trybów mieszania, miniatury
-- **Zaznaczenia:** prostokątne, eliptyczne, odręczne (lasso), różdżka, wg koloru; łączenie (Shift = dodaj, Ctrl = odejmij, Shift+Ctrl = przetnij)
+- **Warstwy:** krycie, 6 trybów mieszania, miniatury, menu pod prawym przyciskiem (scal w dół, alfa do zaznaczenia, kolor na przezroczystość, spłaszcz)
+- **Zaznaczenia:** prostokątne, eliptyczne, odręczne (lasso), różdżka, wg koloru; łączenie (Shift = dodaj, Ctrl = odejmij, Shift+Ctrl = przetnij); obrys „maszerujące mrówki” po rzeczywistym kształcie
+- **Edycja:** wyczyść zaznaczenie (Delete), wypełnij kolorem pierwszoplanowym / tła
 - **Malowanie:** pędzel, ołówek, aerograf, gumka, kubełek, gradient, klonowanie, rozmazywanie, rozjaśnianie/ściemnianie, rozmywanie/wyostrzanie
 - **Przekształcenia:** przesuwanie, kadrowanie, obrót, skalowanie, odbicie; skalowanie obrazu i rozmiar płótna
 - **Tekst:** czcionki systemowe (przez fontconfig), tekst na nowej warstwie
@@ -31,6 +32,10 @@ cargo run -p dziwak --release
 Wersja bez AI (mniejsza binarka, szybsza kompilacja): `cargo build --release -p dziwak --no-default-features`.
 
 ## Instalacja
+
+**Windows 10/11:** pobierz `dziwak-…-windows-x64.zip` z [Releases](https://github.com/wasyleque/dziwak/releases), rozpakuj i uruchom `dziwak.exe` (wersja przenośna, bez instalacji; folder `models` zostaw obok programu).
+
+**Linux:**
 
 ```bash
 scripts/install-local.sh
@@ -62,10 +67,13 @@ Narzędzia mają skróty jak w GIMP 2.10.
 | Ctrl+O / Ctrl+Shift+S | Otwórz / Zapisz jako |
 | Ctrl+Z / Ctrl+Shift+Z, Ctrl+Y | Cofnij / Ponów |
 | Ctrl+A / Ctrl+Shift+A / Ctrl+I | Zaznacz wszystko / Odznacz / Odwróć zaznaczenie |
+| Delete | Wyczyść zaznaczenie (bez zaznaczenia: całą warstwę) |
+| Ctrl+, / Ctrl+. | Wypełnij kolorem pierwszoplanowym / tła |
 | X / D | Zamień kolory / Domyślne kolory |
 | Tab | Pokaż/ukryj doki |
 | Shift+J / Shift+Ctrl+J | Wyśrodkuj obraz / Dopasuj do okna |
-| Kółko myszy | Zoom wokół kursora |
+| Kółko myszy / Shift+kółko | Przewijanie góra–dół / lewo–prawo |
+| Ctrl+kółko | Zoom wokół kursora |
 | Środkowy przycisk, Spacja+LPM | Przesuwanie widoku |
 
 ## Architektura

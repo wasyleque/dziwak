@@ -837,9 +837,16 @@ pub fn render_canvas(app: &mut DziwakApp, ctx: &egui::Context, should_fit_to_vie
                 app.cancel_free_select();
             }
 
-            // Animacja maszerujących mrówek (tylko gdy aktywne jest zaznaczenie lub przeciąganie)
-            let has_active_selection =
-                app.selection.has_selection && app.selection.bounds().is_some();
+            // Odświeżenie pamięci podręcznej obrysu zaznaczenia przy zmianie rewizji
+            if app.selection_outline_rev != app.selection.revision {
+                app.selection_outline = app.selection.outline_segments();
+                app.selection_outline_rev = app.selection.revision;
+            }
+
+            // Animacja maszerujących mrówek (tylko gdy aktywne jest zaznaczenie <= 20000 odcinków lub przeciąganie)
+            let has_active_selection = app.selection.has_selection
+                && !app.selection_outline.is_empty()
+                && app.selection_outline.len() <= 20_000;
             let is_dragging_selection = app.selection_drag_start.is_some();
             let has_crop_overlay = app.active_tool == ActiveTool::Crop
                 && (app.crop_rect.is_some() || app.crop_drag_start.is_some());
@@ -878,18 +885,16 @@ pub fn render_canvas(app: &mut DziwakApp, ctx: &egui::Context, should_fit_to_vie
                 ctx.set_cursor_icon(egui::CursorIcon::Crosshair);
             }
 
-            // Obsługa zoomu kółkiem myszy wokół kursora
+            // Kółko myszy jak w GIMP: kółko = przewijanie góra/dół (Shift+kółko = lewo/prawo),
+            // Ctrl+kółko (egui zamienia je na zoom_delta) i szczypanie touchpada = zoom wokół kursora.
             if is_hovered {
-                let scroll_y = ctx.input(|i| {
-                    if i.smooth_scroll_delta.y != 0.0 {
-                        i.smooth_scroll_delta.y
-                    } else {
-                        i.raw_scroll_delta.y * 50.0
-                    }
-                });
-                let pinch_zoom = ctx.input(|i| i.zoom_delta());
-
-                let zoom_factor = pinch_zoom * 1.15_f32.powf(scroll_y / 50.0);
+                let (scroll, zoom_delta) = ctx.input(|i| (i.smooth_scroll_delta, i.zoom_delta()));
+                if scroll != egui::Vec2::ZERO {
+                    app.transform.pan += scroll;
+                    app.auto_fit = false;
+                }
+                // Łagodniejszy, dokładniejszy zoom: połowa kroku domyślnego egui.
+                let zoom_factor = zoom_delta.powf(0.5);
                 if (zoom_factor - 1.0_f32).abs() > 1e-4 {
                     if let Some(cursor_pos) = hover_pos {
                         app.transform
@@ -1024,23 +1029,40 @@ pub fn render_canvas(app: &mut DziwakApp, ctx: &egui::Context, should_fit_to_vie
                     }
                 }
             } else if app.selection.has_selection {
-                if let Some(b) = app.selection.bounds() {
-                    let s_min = app
+                if app.selection_outline_rev != app.selection.revision {
+                    app.selection_outline = app.selection.outline_segments();
+                    app.selection_outline_rev = app.selection.revision;
+                }
+                let animate = app.selection_outline.len() <= 20_000;
+                let black_stroke = egui::Stroke::new(1.0_f32, egui::Color32::BLACK);
+                let white_stroke = egui::Stroke::new(1.0_f32, egui::Color32::WHITE);
+                for &(x0, y0, x1, y1) in &app.selection_outline {
+                    let p0 = app
                         .transform
-                        .canvas_to_screen(egui::pos2(b.x as f32, b.y as f32));
-                    let s_max = app.transform.canvas_to_screen(egui::pos2(
-                        (b.x + b.width) as f32,
-                        (b.y + b.height) as f32,
-                    ));
-                    let sel_screen_rect = egui::Rect::from_min_max(s_min, s_max);
-
-                    match app.selection_shape {
-                        SelectionShape::Ellipse => {
-                            draw_marching_ants_ellipse(&canvas_painter, sel_screen_rect, phase);
-                        }
-                        SelectionShape::Rect => {
-                            draw_marching_ants_rect(&canvas_painter, sel_screen_rect, phase);
-                        }
+                        .canvas_to_screen(egui::pos2(x0 as f32, y0 as f32));
+                    let p1 = app
+                        .transform
+                        .canvas_to_screen(egui::pos2(x1 as f32, y1 as f32));
+                    let seg_rect = egui::Rect::from_two_pos(p0, p1);
+                    if !canvas_viewport_rect.intersects(seg_rect) {
+                        continue;
+                    }
+                    canvas_painter.line_segment([p0, p1], black_stroke);
+                    if animate {
+                        canvas_painter.extend(egui::Shape::dashed_line_with_offset(
+                            &[p0, p1],
+                            white_stroke,
+                            &[4.0_f32],
+                            &[4.0_f32],
+                            phase,
+                        ));
+                    } else {
+                        canvas_painter.extend(egui::Shape::dashed_line(
+                            &[p0, p1],
+                            white_stroke,
+                            4.0_f32,
+                            4.0_f32,
+                        ));
                     }
                 }
             }

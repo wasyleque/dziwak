@@ -50,6 +50,39 @@ pub fn render_menu_bar(
                     ui.close();
                 }
                 ui.separator();
+                let has_layers = !app.document.layers.is_empty();
+                if ui
+                    .add_enabled(
+                        has_layers,
+                        egui::Button::new(tr("Wyczyść")).shortcut_text("Delete"),
+                    )
+                    .clicked()
+                {
+                    app.clear_selection_or_layer();
+                    ui.close();
+                }
+                if ui
+                    .add_enabled(
+                        has_layers,
+                        egui::Button::new(tr("Wypełnij kolorem pierwszoplanowym"))
+                            .shortcut_text("Ctrl+,"),
+                    )
+                    .clicked()
+                {
+                    app.fill_with_fg_color();
+                    ui.close();
+                }
+                if ui
+                    .add_enabled(
+                        has_layers,
+                        egui::Button::new(tr("Wypełnij kolorem tła")).shortcut_text("Ctrl+."),
+                    )
+                    .clicked()
+                {
+                    app.fill_with_bg_color();
+                    ui.close();
+                }
+                ui.separator();
                 ui.menu_button(tr("Język"), |ui| {
                     for lang in crate::i18n::Lang::ALL {
                         let current = crate::i18n::lang() == lang;
