@@ -5,6 +5,8 @@ use crate::document::Rect;
 use crate::layer::Layer;
 use crate::pixel::Rgba8;
 use crate::selection::Selection;
+use crate::tile::{TILE_PIXELS, TILE_SIZE};
+use std::collections::HashMap;
 
 /// Tryb działania pędzla (malowanie lub wymazywanie).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
@@ -228,37 +230,102 @@ pub fn smudge_dab(
     changed.map(|(a, b, c, d)| Rect::new(a, b, c - a + 1, d - b + 1))
 }
 
-/// Rozjaśnianie (amount > 0) lub ściemnianie (amount < 0) piksela premultiplied; amount w -1.0..=1.0.
-pub fn dodge_burn_pixel(px: Rgba8, amount: f32) -> Rgba8 {
+/// Zakres tonalny rozjaśniania/ściemniania (jak „Zakres” w GIMP).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum ToneRange {
+    Shadows,
+    #[default]
+    Midtones,
+    Highlights,
+}
+
+/// Maska pociągnięcia jak w GIMP (tryb nieprzyrostowy): pamięta na piksel najwyższe krycie śladu
+/// w bieżącym pociągnięciu, więc nakładające się ślady nie kumulują efektu.
+/// Rzadka — kafle 64×64 powstają tylko tam, gdzie przeszedł pędzel.
+#[derive(Debug, Default, Clone)]
+pub struct StrokeMask {
+    tiles: HashMap<(u32, u32), Box<[u8; TILE_PIXELS]>>,
+}
+
+impl StrokeMask {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Podnosi krycie piksela do co najmniej `k`; zwraca nowe krycie, jeśli wzrosło.
+    pub fn raise(&mut self, x: u32, y: u32, k: u8) -> Option<u8> {
+        if k == 0 {
+            return None;
+        }
+        let ts = TILE_SIZE as u32;
+        let tile = self
+            .tiles
+            .entry((x / ts, y / ts))
+            .or_insert_with(|| Box::new([0; TILE_PIXELS]));
+        let v = &mut tile[((y % ts) * ts + x % ts) as usize];
+        if k > *v {
+            *v = k;
+            Some(k)
+        } else {
+            None
+        }
+    }
+}
+
+/// Tablica krzywej rozjaśniania (exposure > 0) / ściemniania (exposure < 0) — wzory GIMP (gimpdodgeburn):
+/// factor = 1 + |exposure| / 3; półtony: in^(1/factor) / in^factor, światła: in·factor / in/factor,
+/// cienie: 1 − (1 − in)/factor / 1 − (1 − in)·factor. Czerń i biel zostają na miejscu w półtonach.
+pub fn dodge_burn_lut(exposure: f32, range: ToneRange) -> [u8; 256] {
+    let dodge = exposure >= 0.0;
+    let factor = 1.0 + exposure.abs().min(1.0) / 3.0;
+    let mut lut = [0u8; 256];
+    for (v, out) in lut.iter_mut().enumerate() {
+        let i = v as f32 / 255.0;
+        let o = match (range, dodge) {
+            (ToneRange::Midtones, true) => i.powf(1.0 / factor),
+            (ToneRange::Midtones, false) => i.powf(factor),
+            (ToneRange::Highlights, true) => i * factor,
+            (ToneRange::Highlights, false) => i / factor,
+            (ToneRange::Shadows, true) => 1.0 - (1.0 - i) / factor,
+            (ToneRange::Shadows, false) => 1.0 - (1.0 - i) * factor,
+        };
+        *out = (o * 255.0).round().clamp(0.0, 255.0) as u8;
+    }
+    lut
+}
+
+/// Rozjaśnia/ściemnia piksel premultiplied krzywą z [`dodge_burn_lut`] (alfa bez zmian).
+pub fn dodge_burn_pixel(px: Rgba8, lut: &[u8; 256]) -> Rgba8 {
     if px.a() == 0 {
         return px;
     }
     let [r, g, b, a] = px.to_straight();
-    let amount = amount.clamp(-1.0, 1.0);
-    let f = |v: u8| -> u8 {
-        let v = v as f32;
-        let n = if amount >= 0.0 {
-            v + (255.0 - v) * amount
-        } else {
-            v * (1.0 + amount)
-        };
-        n.round().clamp(0.0, 255.0) as u8
-    };
-    Rgba8::from_straight(f(r), f(g), f(b), a)
+    Rgba8::from_straight(lut[r as usize], lut[g as usize], lut[b as usize], a)
 }
 
-/// Rozjaśnianie (amount > 0) / ściemnianie (amount < 0) pędzlem: każdy piksel w okręgu dostaje dodge_burn_pixel(px, amount * falloff * pokrycie zaznaczenia).
+/// Ślad rozjaśniania (exposure > 0) / ściemniania (exposure < 0) jak w GIMP: wynik liczony jest
+/// z `source` (stan z początku pociągnięcia), a krycie to maksimum śladów w `mask` — jedno pociągnięcie
+/// rozjaśnia najwyżej o jedną „ekspozycję”, kolejne pociągnięcia dokładają następną.
 #[allow(clippy::too_many_arguments)]
 pub fn dodge_burn_dab(
     layer: &mut Layer,
+    source: &crate::layer::TiledLayer,
+    mask: &mut StrokeMask,
     cx: f32,
     cy: f32,
     radius: f32,
     hardness: f32,
-    amount: f32,
+    exposure: f32,
+    range: ToneRange,
     selection: Option<&Selection>,
 ) -> Option<Rect> {
-    if radius <= 0.0 || amount == 0.0 || layer.pixels.width == 0 || layer.pixels.height == 0 {
+    if radius <= 0.0
+        || exposure == 0.0
+        || layer.pixels.width == 0
+        || layer.pixels.height == 0
+        || source.width != layer.pixels.width
+        || source.height != layer.pixels.height
+    {
         return None;
     }
 
@@ -271,29 +338,27 @@ pub fn dodge_burn_dab(
         return None;
     }
 
+    let lut = dodge_burn_lut(exposure, range);
     let mut changed: Option<(u32, u32, u32, u32)> = None;
     for y in y0..=y1 {
         for x in x0..=x1 {
             let dist = ((x as f32 + 0.5 - cx).powi(2) + (y as f32 + 0.5 - cy).powi(2)).sqrt();
             let falloff = brush_falloff(dist, radius, hardness) as f32 / 255.0;
             let cov = selection.map_or(1.0, |s| s.coverage(x as u32, y as u32) as f32 / 255.0);
-            let k = falloff * cov;
-            if k <= 0.0 {
+            let k = (falloff * cov * 255.0).round() as u8;
+            let Some(m) = mask.raise(x as u32, y as u32, k) else {
                 continue;
-            }
-
-            let dst = layer
+            };
+            let src = source
                 .get_pixel(x as u32, y as u32)
                 .unwrap_or(Rgba8::TRANSPARENT);
-            let out = dodge_burn_pixel(dst, amount * k);
-            if out != dst {
-                let _ = layer.set_pixel(x as u32, y as u32, out);
-                let (ux, uy) = (x as u32, y as u32);
-                changed = Some(match changed {
-                    None => (ux, uy, ux, uy),
-                    Some((a, b, c, d)) => (a.min(ux), b.min(uy), c.max(ux), d.max(uy)),
-                });
-            }
+            let out = mix_pixels(src, dodge_burn_pixel(src, &lut), m as f32 / 255.0);
+            let _ = layer.set_pixel(x as u32, y as u32, out);
+            let (ux, uy) = (x as u32, y as u32);
+            changed = Some(match changed {
+                None => (ux, uy, ux, uy),
+                Some((a, b, c, d)) => (a.min(ux), b.min(uy), c.max(ux), d.max(uy)),
+            });
         }
     }
 
@@ -372,13 +437,15 @@ pub fn clone_dab(
     changed.map(|(a, b, c, d)| Rect::new(a, b, c - a + 1, d - b + 1))
 }
 
-/// Rozmywanie (amount > 0) lub wyostrzanie (amount < 0) pędzlem w obszarze okręgu o środku (cx, cy).
-/// Piksele źródłowe i rozmyte wyliczane są ze stanu `source` (z początku pociągnięcia),
-/// a wynik miesza bieżący piksel warstwy z obliczonym pikselem docelowym (`target`).
+/// Rozmywanie (amount > 0) lub wyostrzanie (amount < 0) pędzlem w okręgu o środku (cx, cy), jak „Rozmycie/Wyostrzanie” w GIMP.
+/// Rozmywanie działa przyrostowo na bieżącej warstwie (filtr 3×3 z siłą `amount` na ślad — pocieranie rozmywa coraz mocniej,
+/// a rozmycie jest stabilne). Wyostrzanie liczy maskę wyostrzającą ze stanu `source` (z początku pociągnięcia) z kryciem
+/// = maksimum śladów w `mask`, więc jedno pociągnięcie wyostrza najwyżej raz i nie „wypala” szumu zdjęcia.
 #[allow(clippy::too_many_arguments)]
 pub fn blur_sharpen_dab(
     layer: &mut Layer,
     source: &crate::layer::TiledLayer,
+    mask: &mut StrokeMask,
     cx: f32,
     cy: f32,
     radius: f32,
@@ -405,20 +472,22 @@ pub fn blur_sharpen_dab(
         return None;
     }
 
-    // Pobieramy bufor ze źródła z zapasem 2 px z każdej strony dla splotu gaussa
-    let pad = 2i64;
+    let amount = amount.clamp(-1.0, 1.0);
+    let sharpen = amount < 0.0;
+    // Bufor z zapasem 1 px na filtr 3×3: przy wyostrzaniu ze źródła, przy rozmywaniu z bieżącej warstwy.
+    let pad = 1i64;
     let bx0 = (x0 - pad).max(0);
     let by0 = (y0 - pad).max(0);
     let bx1 = (x1 + pad).min(w - 1);
     let by1 = (y1 + pad).min(h - 1);
     let bw = (bx1 - bx0 + 1) as usize;
     let bh = (by1 - by0 + 1) as usize;
-
+    let read_from = if sharpen { source } else { &layer.pixels };
     let mut src_buf = Vec::with_capacity(bw * bh);
     for y in by0..=by1 {
         for x in bx0..=bx1 {
             src_buf.push(
-                source
+                read_from
                     .get_pixel(x as u32, y as u32)
                     .unwrap_or(Rgba8::TRANSPARENT),
             );
@@ -428,66 +497,50 @@ pub fn blur_sharpen_dab(
     let kernel = [0.25f32, 0.5f32, 0.25f32];
     let mut tmp_buf = vec![Rgba8::TRANSPARENT; bw * bh];
     let mut blurred_buf = vec![Rgba8::TRANSPARENT; bw * bh];
-
-    // Przejście poziome i pionowe
     crate::blur::blur_pass(&src_buf, &mut tmp_buf, bw, bh, &kernel, true);
     crate::blur::blur_pass(&tmp_buf, &mut blurred_buf, bw, bh, &kernel, false);
 
-    let amount_clamped = amount.clamp(-1.0, 1.0);
+    // Siła maski wyostrzającej: 0,5 → szczegóły ×1,25 na pociągnięcie, 1,0 → ×1,5.
+    let s = -amount * 0.5;
     let mut changed: Option<(u32, u32, u32, u32)> = None;
-
     for y in y0..=y1 {
-        let py = y as f32 + 0.5;
-        let dy = py - cy;
         let local_y = (y - by0) as usize;
-
         for x in x0..=x1 {
-            let px = x as f32 + 0.5;
-            let dx = px - cx;
-            let dist = dx.hypot(dy);
-
-            if dist > radius {
-                continue;
-            }
-
+            let dist = ((x as f32 + 0.5 - cx).powi(2) + (y as f32 + 0.5 - cy).powi(2)).sqrt();
             let falloff = brush_falloff(dist, radius, hardness) as f32 / 255.0;
             let cov = selection.map_or(1.0, |s| s.coverage(x as u32, y as u32) as f32 / 255.0);
             let k = falloff * cov;
             if k <= 0.0 {
                 continue;
             }
-
-            let local_x = (x - bx0) as usize;
-            let idx = local_y * bw + local_x;
+            let idx = local_y * bw + (x - bx0) as usize;
             let orig = src_buf[idx];
             let blurred = blurred_buf[idx];
 
-            let target = if amount_clamped >= 0.0 {
-                // Rozmycie: docelowym pikselem jest rozmyty piksel ze źródła
-                blurred
-            } else {
-                // Wyostrzanie: unsharp mask tylko na R,G,B w premultiplied (0..=orig.a), alfa bez zmian
-                // Łagodnie jak w GIMP: siła 0,5 wzmacnia szczegóły 1,25×, pełna siła 1,5× na pociągnięcie
-                // (wcześniej 2×–3×, co po kilku pociągnięciach „wypalało” szum zdjęcia).
-                let s = (-amount_clamped) * 0.5;
+            let out = if sharpen {
+                let Some(m) = mask.raise(x as u32, y as u32, (k * 255.0).round() as u8) else {
+                    continue;
+                };
+                // RGB w premultiplied przycięte do alfy, alfa bez zmian.
                 let max_c = orig.a() as f32;
                 let calc = |o: u8, b: u8| -> u8 {
                     let o_f = o as f32;
-                    let diff = o_f - b as f32;
-                    (o_f + diff * s).round().clamp(0.0, max_c) as u8
+                    (o_f + (o_f - b as f32) * s).round().clamp(0.0, max_c) as u8
                 };
-                Rgba8::new(
+                let target = Rgba8::new(
                     calc(orig.r(), blurred.r()),
                     calc(orig.g(), blurred.g()),
                     calc(orig.b(), blurred.b()),
                     orig.a(),
-                )
+                );
+                mix_pixels(orig, target, m as f32 / 255.0)
+            } else {
+                mix_pixels(orig, blurred, k * amount)
             };
 
             let cur = layer
                 .get_pixel(x as u32, y as u32)
                 .unwrap_or(Rgba8::TRANSPARENT);
-            let out = mix_pixels(cur, target, k);
             if out != cur {
                 let _ = layer.set_pixel(x as u32, y as u32, out);
                 let (ux, uy) = (x as u32, y as u32);
@@ -699,12 +752,19 @@ mod tests {
     #[test]
     fn test_dodge_burn_and_mix() {
         let px = Rgba8::new(100, 100, 100, 255);
-        let d = dodge_burn_pixel(px, 0.5);
-        assert!((177..=179).contains(&d.r()) && d.a() == 255);
-        let b = dodge_burn_pixel(px, -0.5);
-        assert!((49..=51).contains(&b.r()));
+        let mid = ToneRange::Midtones;
+        // GIMP, półtony, ekspozycja 50%: 100 → 255·(100/255)^(1/1,1667) ≈ 114
+        let d = dodge_burn_pixel(px, &dodge_burn_lut(0.5, mid));
+        assert!((112..=116).contains(&d.r()) && d.a() == 255, "{d:?}");
+        let b = dodge_burn_pixel(px, &dodge_burn_lut(-0.5, mid));
+        assert!((85..=89).contains(&b.r()), "{b:?}");
+        // półtony nie ruszają czerni ani bieli — brak białych/czarnych plam
+        let lut = dodge_burn_lut(1.0, mid);
+        assert_eq!((lut[0], lut[255]), (0, 255));
+        let lut = dodge_burn_lut(-1.0, mid);
+        assert_eq!((lut[0], lut[255]), (0, 255));
         assert_eq!(
-            dodge_burn_pixel(Rgba8::TRANSPARENT, 1.0),
+            dodge_burn_pixel(Rgba8::TRANSPARENT, &dodge_burn_lut(1.0, mid)),
             Rgba8::TRANSPARENT
         );
         let (a, c) = (Rgba8::new(0, 0, 0, 255), Rgba8::new(200, 100, 50, 255));
@@ -756,12 +816,43 @@ mod tests {
         }
 
         // Wykonujemy dodge_burn_dab z rozjaśnieniem (amount = 0.5)
-        let rect = dodge_burn_dab(&mut layer, 5.0, 5.0, 2.0, 1.0, 0.5, None);
+        let source = layer.pixels.clone();
+        let mut mask = StrokeMask::new();
+        let rect = dodge_burn_dab(
+            &mut layer,
+            &source,
+            &mut mask,
+            5.0,
+            5.0,
+            2.0,
+            1.0,
+            0.5,
+            ToneRange::Midtones,
+            None,
+        );
 
         assert!(rect.is_some());
 
         // Piksel centralny powinien być jaśniejszy
-        assert!(layer.get_pixel(5, 5).unwrap().r() > 150);
+        let once = layer.get_pixel(5, 5).unwrap();
+        assert!(once.r() > 105, "{once:?}");
+
+        // Kolejne ślady w tym samym pociągnięciu nie kumulują efektu (maska pociągnięcia)
+        for _ in 0..20 {
+            dodge_burn_dab(
+                &mut layer,
+                &source,
+                &mut mask,
+                5.0,
+                5.0,
+                2.0,
+                1.0,
+                0.5,
+                ToneRange::Midtones,
+                None,
+            );
+        }
+        assert_eq!(layer.get_pixel(5, 5).unwrap(), once);
 
         // Piksel w rogu nie powinien się zmienić
         assert_eq!(
@@ -799,7 +890,17 @@ mod tests {
 
         // Blur dab over the center
         let source = layer.pixels.clone();
-        let rect = blur_sharpen_dab(&mut layer, &source, 5.5, 5.5, 3.0, 1.0, 1.0, None);
+        let rect = blur_sharpen_dab(
+            &mut layer,
+            &source,
+            &mut StrokeMask::new(),
+            5.5,
+            5.5,
+            3.0,
+            1.0,
+            1.0,
+            None,
+        );
         assert!(rect.is_some());
         // Center pixel should be diffused/blurred (lower than 255)
         let center = layer.get_pixel(5, 5).unwrap();
@@ -810,8 +911,17 @@ mod tests {
 
         // Sharpen dab increases center contrast again
         let source_sharp = layer.pixels.clone();
-        let rect_sharp =
-            blur_sharpen_dab(&mut layer, &source_sharp, 5.5, 5.5, 3.0, 1.0, -1.0, None);
+        let rect_sharp = blur_sharpen_dab(
+            &mut layer,
+            &source_sharp,
+            &mut StrokeMask::new(),
+            5.5,
+            5.5,
+            3.0,
+            1.0,
+            -1.0,
+            None,
+        );
         assert!(rect_sharp.is_some());
         assert!(layer.get_pixel(5, 5).unwrap().r() > center.r());
     }
@@ -841,20 +951,34 @@ mod tests {
 
         let source = init_layer.pixels.clone();
 
-        // Pojedynczy dab z k = 1 (hardness = 1.0, brak zaznaczenia)
-        let mut single_layer = init_layer.clone();
-        blur_sharpen_dab(&mut single_layer, &source, 8.5, 8.5, 4.0, 1.0, -0.8, None);
-
-        // 20 dabów w tym samym miejscu z tym samym source (nawet przy częściowym pokryciu zaznaczenia k < 1)
+        // Zaznaczenie z pokryciem 50% (k < 1)
         let mut sel = Selection::new(16, 16);
-        let mask = vec![128u8; 16 * 16];
-        sel.combine_mask(&mask, crate::selection::SelectMode::Replace);
+        let sel_mask = vec![128u8; 16 * 16];
+        sel.combine_mask(&sel_mask, crate::selection::SelectMode::Replace);
+
+        // Pojedynczy dab
+        let mut single_layer = init_layer.clone();
+        blur_sharpen_dab(
+            &mut single_layer,
+            &source,
+            &mut StrokeMask::new(),
+            8.5,
+            8.5,
+            4.0,
+            1.0,
+            -0.8,
+            Some(&sel),
+        );
+
+        // 20 dabów w tym samym miejscu w jednym pociągnięciu daje to samo co jeden (maska pociągnięcia)
+        let mut stroke = StrokeMask::new();
 
         let mut multi_layer = init_layer.clone();
         for _ in 0..20 {
             blur_sharpen_dab(
                 &mut multi_layer,
                 &source,
+                &mut stroke,
                 8.5,
                 8.5,
                 4.0,
@@ -877,7 +1001,7 @@ mod tests {
                 assert!(p_multi.g() <= p_multi.a());
                 assert!(p_multi.b() <= p_multi.a());
 
-                // 20 dabów w tym samym miejscu daje wynik równy pojedynczemu dabowi z k=1 (tolerancja ±2)
+                // 20 dabów w jednym pociągnięciu = jeden dab (tolerancja ±2)
                 assert!((p_single.r() as i16 - p_multi.r() as i16).abs() <= 2);
                 assert!((p_single.g() as i16 - p_multi.g() as i16).abs() <= 2);
                 assert!((p_single.b() as i16 - p_multi.b() as i16).abs() <= 2);
@@ -913,10 +1037,12 @@ mod sharpen_strength_tests {
         }
         for _ in 0..strokes {
             let src = layer.pixels.clone();
+            let mut mask = StrokeMask::new();
             for k in 0..20 {
                 blur_sharpen_dab(
                     &mut layer,
                     &src,
+                    &mut mask,
                     14.0 + k as f32,
                     24.0,
                     10.0,

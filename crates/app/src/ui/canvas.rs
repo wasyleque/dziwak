@@ -303,7 +303,9 @@ pub fn render_canvas(app: &mut DziwakApp, ctx: &egui::Context, should_fit_to_vie
                     app.doc.last_stroke_pos = None;
                     app.doc.last_airbrush_dab = None;
                 }
-            } else if app.doc.is_painting {
+            } else if app.doc.is_painting && is_brush_like {
+                // Tylko własne pociągnięcie — inne narzędzia (rozmazywanie, rozjaśnianie…)
+                // kończą swoje same; wcześniej to zerowało je co klatkę.
                 app.doc.is_painting = false;
                 app.doc.last_stroke_pos = None;
                 app.doc.last_airbrush_dab = None;
@@ -450,16 +452,7 @@ pub fn render_canvas(app: &mut DziwakApp, ctx: &egui::Context, should_fit_to_vie
                             app.push_history();
                             app.doc.is_painting = true;
                             app.doc.stroke_carry = spacing;
-                            if app.active_tool == ActiveTool::BlurSharpen
-                                && !app.doc.document.layers.is_empty()
-                            {
-                                let layer_idx = app
-                                    .doc
-                                    .active_layer_index
-                                    .min(app.doc.document.layers.len() - 1);
-                                app.doc.blur_sharpen_source =
-                                    Some(app.doc.document.layers[layer_idx].pixels.clone());
-                            }
+                            app.begin_tone_stroke();
                             apply_dab(app, p2.0, p2.1);
                             app.doc.last_stroke_pos = Some(p2);
                         } else if let Some(p1) = app.doc.last_stroke_pos {
@@ -481,12 +474,12 @@ pub fn render_canvas(app: &mut DziwakApp, ctx: &egui::Context, should_fit_to_vie
                 } else if !is_primary_down && app.doc.is_painting {
                     app.doc.is_painting = false;
                     app.doc.last_stroke_pos = None;
-                    app.doc.blur_sharpen_source = None;
+                    app.end_tone_stroke();
                 }
             } else if app.doc.is_painting && is_dodge_or_blur {
                 app.doc.is_painting = false;
                 app.doc.last_stroke_pos = None;
-                app.doc.blur_sharpen_source = None;
+                app.end_tone_stroke();
             }
 
             // Obsługa wypełniania kubełkiem (pojedyncze kliknięcie LPM na płótnie)

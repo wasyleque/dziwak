@@ -28,7 +28,10 @@ pub mod transform;
 
 pub use adjust::{brightness_contrast, gaussian_blur, hue_saturation, unsharp_mask};
 pub use blend::{apply_opacity, apply_opacity_u8, blend_normal, div255_round, BlendMode};
-pub use brush::{apply_dab, blur_sharpen_dab, brush_falloff, clone_dab, dodge_burn_dab, BrushMode};
+pub use brush::{
+    apply_dab, blur_sharpen_dab, brush_falloff, clone_dab, dodge_burn_dab, BrushMode, StrokeMask,
+    ToneRange,
+};
 pub use document::{CompositionError, Document, Rect};
 pub use history::{
     count_allocated_tiles, count_unshared_tiles, History, LayerSnapshot, Snapshot,

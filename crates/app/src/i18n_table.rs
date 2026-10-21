@@ -577,4 +577,8 @@ pub static TABLE: &[(&str, &str, &str)] = &[
         "Don't Save Any",
         "No guardar ninguno",
     ),
+    ("Zakres:", "Range:", "Rango:"),
+    ("Cienie", "Shadows", "Sombras"),
+    ("Półtony", "Midtones", "Medios tonos"),
+    ("Światła", "Highlights", "Luces"),
 ];

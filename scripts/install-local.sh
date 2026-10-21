@@ -7,7 +7,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 # Skompiluj projekt w trybie release
-cargo build --release -p dziwak -j 3
+cargo build --release -p dziwak -j 2
 
 # Zainstaluj plik wykonywalny
 install -Dm755 target/release/dziwak ~/.local/bin/dziwak

@@ -808,6 +808,110 @@ mod text_tool_ui_tests {
         );
     }
 
+    /// Obraz: lewa połowa czerwona, prawa biała; pociągnięcie rozmazywania z czerwieni w biel.
+    fn two_tone_app(ctx: &egui::Context, f: &mut eframe::Frame) -> DziwakApp {
+        let mut app = DziwakApp::new();
+        let (w, h) = (app.doc.document.width, app.doc.document.height);
+        let mut layer = dziwak_core::Layer::new("t", w, h);
+        for y in 0..h {
+            for x in 0..w {
+                let c = if x < w / 2 {
+                    [200, 20, 20]
+                } else {
+                    [240, 240, 240]
+                };
+                let _ =
+                    layer.set_pixel(x, y, dziwak_core::pixel::Rgba8::new(c[0], c[1], c[2], 255));
+            }
+        }
+        app.doc.document.layers = vec![layer];
+        app.doc.active_layer_index = 0;
+        app.mark_document_dirty();
+        for _ in 0..3 {
+            frame(&mut app, ctx, f, vec![]);
+        }
+        app
+    }
+
+    /// Przeciąga mysz po płótnie od `from` do `to` (współrzędne obrazu) w `steps` ruchach.
+    fn drag_canvas(
+        app: &mut DziwakApp,
+        ctx: &egui::Context,
+        f: &mut eframe::Frame,
+        from: egui::Pos2,
+        to: egui::Pos2,
+        steps: usize,
+    ) {
+        let none = egui::Modifiers::NONE;
+        let s = app.doc.transform.canvas_to_screen(from);
+        let e = app.doc.transform.canvas_to_screen(to);
+        frame(app, ctx, f, vec![egui::Event::PointerMoved(s)]);
+        frame(app, ctx, f, vec![button(s, true, none)]);
+        for k in 1..=steps {
+            let p = s + (e - s) * (k as f32 / steps as f32);
+            frame(app, ctx, f, vec![egui::Event::PointerMoved(p)]);
+        }
+        frame(app, ctx, f, vec![button(e, false, none)]);
+    }
+
+    #[test]
+    fn smudge_drags_color_on_canvas() {
+        let ctx = egui::Context::default();
+        let mut f = eframe::Frame::_new_kittest();
+        let mut app = two_tone_app(&ctx, &mut f);
+        app.set_active_tool(ActiveTool::Smudge);
+        app.brush_size = 20.0;
+        let (w, h) = (
+            app.doc.document.width as f32,
+            app.doc.document.height as f32,
+        );
+        let y = h * 0.5;
+        drag_canvas(
+            &mut app,
+            &ctx,
+            &mut f,
+            egui::pos2(w * 0.5 - 15.0, y),
+            egui::pos2(w * 0.5 + 25.0, y),
+            20,
+        );
+        let px = app.doc.document.layers[0]
+            .get_pixel((w * 0.5 + 8.0) as u32, y as u32)
+            .unwrap_or_default();
+        assert!(
+            px.g() < 200,
+            "rozmazywanie nie przeciągnęło czerwieni w biel: {px:?}"
+        );
+    }
+
+    #[test]
+    fn dodge_stroke_does_not_burn_to_white() {
+        let ctx = egui::Context::default();
+        let mut f = eframe::Frame::_new_kittest();
+        let mut app = two_tone_app(&ctx, &mut f);
+        app.set_active_tool(ActiveTool::DodgeBurn);
+        app.dodge_burn_type = crate::state::DodgeBurnType::Dodge;
+        app.brush_size = 20.0;
+        let (w, h) = (
+            app.doc.document.width as f32,
+            app.doc.document.height as f32,
+        );
+        let y = h * 0.5;
+        // tam i z powrotem po czerwonym — jedno pociągnięcie
+        drag_canvas(
+            &mut app,
+            &ctx,
+            &mut f,
+            egui::pos2(10.0, y),
+            egui::pos2(w * 0.3, y),
+            30,
+        );
+        let px = app.doc.document.layers[0]
+            .get_pixel((w * 0.15) as u32, y as u32)
+            .unwrap_or_default();
+        assert!(px.r() >= 200, "rozjaśnianie nie rozjaśniło: {px:?}");
+        assert!(px.g() < 90, "rozjaśnianie wypaliło do bieli: {px:?}");
+    }
+
     #[test]
     fn sharpen_brush_does_not_explode() {
         let ctx = egui::Context::default();

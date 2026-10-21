@@ -1,6 +1,6 @@
 pkgbase = dziwak-git
 	pkgdesc = Lightweight GIMP-style raster image editor in Rust for Wayland (Omarchy), with local CPU background removal
-	pkgver = 0.1.1.r28.g0cf3a07
+	pkgver = 0.2.0.r29.gd0a1d10
 	pkgrel = 1
 	url = https://github.com/wasyleque/dziwak
 	arch = x86_64

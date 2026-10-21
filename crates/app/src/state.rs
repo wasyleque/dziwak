@@ -922,8 +922,11 @@ pub struct DocumentTab {
     pub clone_source_layer: Option<dziwak_core::TiledLayer>,
     /// Bufor farby dla aktywnego pociągnięcia narzędzia Rozmazywanie (Shift+S, M47).
     pub smudge_buffer: Option<dziwak_core::brush::SmudgeBuffer>,
-    /// Kopia warstwy pikseli pobrana na początku pociągnięcia rozmywania/wyostrzania (T9).
-    pub blur_sharpen_source: Option<dziwak_core::TiledLayer>,
+    /// Kopia warstwy pikseli z początku pociągnięcia rozjaśniania/ściemniania i rozmywania/wyostrzania
+    /// (kafle Arc — kopia jest tania, kopiowane są tylko zmieniane kafle).
+    pub stroke_source: Option<dziwak_core::TiledLayer>,
+    /// Maska pociągnięcia (jak GIMP): ślady w jednym pociągnięciu nie kumulują efektu.
+    pub stroke_mask: Option<dziwak_core::StrokeMask>,
     /// Ścieżka oczekująca na potwierdzenie spłaszczenia warstw przy zapisie do formatu jednowarstwowego (E13).
     pub pending_flatten_save: Option<PathBuf>,
     /// Numery wersji poszczególnych warstw (zwiększane przy modyfikacjach pikseli).
@@ -1021,7 +1024,8 @@ impl DocumentTab {
             clone_offset: None,
             clone_source_layer: None,
             smudge_buffer: None,
-            blur_sharpen_source: None,
+            stroke_source: None,
+            stroke_mask: None,
             pending_flatten_save: None,
             layer_versions: Vec::new(),
             layer_thumbnails: Vec::new(),
@@ -1111,6 +1115,8 @@ pub struct DziwakApp {
     pub dodge_burn_type: DodgeBurnType,
     /// Ekspozycja dla rozjaśniania/ściemniania (T9).
     pub dodge_burn_exposure: f32,
+    /// Zakres tonalny rozjaśniania/ściemniania (cienie/półtony/światła, jak w GIMP).
+    pub dodge_burn_range: dziwak_core::ToneRange,
     /// Aktywny tryb rozmywania/wyostrzania (Shift+U, T9).
     pub blur_sharpen_type: BlurSharpenType,
     /// Siła rozmywania/wyostrzania (T9).
@@ -1250,6 +1256,7 @@ impl DziwakApp {
             smudge_rate: 0.5,
             dodge_burn_type: DodgeBurnType::Dodge,
             dodge_burn_exposure: 0.5,
+            dodge_burn_range: dziwak_core::ToneRange::Midtones,
             blur_sharpen_type: BlurSharpenType::Blur,
             blur_sharpen_rate: 0.5,
             docks_hidden: false,
@@ -1971,6 +1978,34 @@ impl DziwakApp {
         }
     }
 
+    /// Początek pociągnięcia rozjaśniania/rozmywania: źródło (stan warstwy) i pusta maska pociągnięcia.
+    pub fn begin_tone_stroke(&mut self) {
+        self.doc.stroke_source = None;
+        self.doc.stroke_mask = None;
+        if !self.doc.document.layers.is_empty() {
+            let idx = self
+                .doc
+                .active_layer_index
+                .min(self.doc.document.layers.len() - 1);
+            self.ensure_stroke_source(idx);
+        }
+    }
+
+    /// Koniec pociągnięcia: zwalnia źródło i maskę.
+    pub fn end_tone_stroke(&mut self) {
+        self.doc.stroke_source = None;
+        self.doc.stroke_mask = None;
+    }
+
+    fn ensure_stroke_source(&mut self, layer_idx: usize) {
+        if self.doc.stroke_source.is_none() {
+            self.doc.stroke_source = Some(self.doc.document.layers[layer_idx].pixels.clone());
+        }
+        if self.doc.stroke_mask.is_none() {
+            self.doc.stroke_mask = Some(dziwak_core::StrokeMask::new());
+        }
+    }
+
     /// Nanosi ślad rozjaśniania lub ściemniania (Shift+D, T9). Ctrl odwraca tryb.
     pub fn apply_dodge_burn_dab(&mut self, cx: f32, cy: f32, invert_mode: bool) {
         if self.doc.document.layers.is_empty() {
@@ -1992,16 +2027,22 @@ impl DziwakApp {
             .min(self.doc.document.layers.len() - 1);
         let radius = (self.brush_size * 0.5).max(0.5);
         let hardness = self.brush_hardness;
+        let range = self.dodge_burn_range;
+        self.ensure_stroke_source(layer_idx);
         let sel_arg = if self.doc.selection.has_selection {
             Some(&self.doc.selection)
         } else {
             None
         };
+        let (Some(source), Some(mask)) = (&self.doc.stroke_source, &mut self.doc.stroke_mask)
+        else {
+            return;
+        };
 
         let layer = &mut self.doc.document.layers[layer_idx];
-        if let Some(rect) =
-            dziwak_core::dodge_burn_dab(layer, cx, cy, radius, hardness, amount, sel_arg)
-        {
+        if let Some(rect) = dziwak_core::dodge_burn_dab(
+            layer, source, mask, cx, cy, radius, hardness, amount, range, sel_arg,
+        ) {
             self.mark_rect_dirty(rect);
             self.bump_layer_version(layer_idx);
         }
@@ -2026,14 +2067,7 @@ impl DziwakApp {
             .doc
             .active_layer_index
             .min(self.doc.document.layers.len() - 1);
-        let fallback_source;
-        let source = match &self.doc.blur_sharpen_source {
-            Some(src) => src,
-            None => {
-                fallback_source = self.doc.document.layers[layer_idx].pixels.clone();
-                &fallback_source
-            }
-        };
+        self.ensure_stroke_source(layer_idx);
         let radius = (self.brush_size * 0.5).max(0.5);
         let hardness = self.brush_hardness;
         let sel_arg = if self.doc.selection.has_selection {
@@ -2042,10 +2076,15 @@ impl DziwakApp {
             None
         };
 
+        let (Some(source), Some(mask)) = (&self.doc.stroke_source, &mut self.doc.stroke_mask)
+        else {
+            return;
+        };
+
         let layer = &mut self.doc.document.layers[layer_idx];
-        if let Some(rect) =
-            dziwak_core::blur_sharpen_dab(layer, source, cx, cy, radius, hardness, amount, sel_arg)
-        {
+        if let Some(rect) = dziwak_core::blur_sharpen_dab(
+            layer, source, mask, cx, cy, radius, hardness, amount, sel_arg,
+        ) {
             self.mark_rect_dirty(rect);
             self.bump_layer_version(layer_idx);
         }
@@ -5620,12 +5659,16 @@ mod tests {
         app.doc.document.layers[0].set_pixel(30, 30, gray).unwrap();
         app.dodge_burn_type = DodgeBurnType::Dodge;
         app.dodge_burn_exposure = 0.5;
+        app.begin_tone_stroke();
         app.apply_dodge_burn_dab(30.0, 30.0, false);
+        app.end_tone_stroke();
         let dodged = app.doc.document.layers[0].get_pixel(30, 30).unwrap();
         assert!(dodged.r() > 100);
 
         // Invert Dodge with Ctrl -> Burn
+        app.begin_tone_stroke();
         app.apply_dodge_burn_dab(30.0, 30.0, true);
+        app.end_tone_stroke();
         let burned = app.doc.document.layers[0].get_pixel(30, 30).unwrap();
         assert!(burned.r() < dodged.r());
 

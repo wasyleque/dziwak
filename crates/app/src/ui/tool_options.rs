@@ -104,6 +104,23 @@ pub fn render_tool_options(app: &mut DziwakApp, ui: &mut egui::Ui) {
             ui.add(egui::Slider::new(&mut app.brush_hardness, 0.0..=1.0));
             ui.separator();
 
+            ui.label(tr("Zakres:"));
+            ui.horizontal(|ui| {
+                use dziwak_core::ToneRange;
+                ui.radio_value(&mut app.dodge_burn_range, ToneRange::Shadows, tr("Cienie"));
+                ui.radio_value(
+                    &mut app.dodge_burn_range,
+                    ToneRange::Midtones,
+                    tr("Półtony"),
+                );
+                ui.radio_value(
+                    &mut app.dodge_burn_range,
+                    ToneRange::Highlights,
+                    tr("Światła"),
+                );
+            });
+            ui.separator();
+
             ui.label(tr("Ekspozycja:"));
             ui.add(egui::Slider::new(&mut app.dodge_burn_exposure, 0.0..=1.0));
             ui.separator();
