@@ -5,6 +5,7 @@ pub mod blend;
 pub mod blur;
 pub mod brush;
 pub mod color;
+pub mod desaturate;
 pub mod document;
 pub mod eyedropper;
 pub mod fill;

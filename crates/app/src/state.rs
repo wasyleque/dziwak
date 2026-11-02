@@ -525,6 +525,10 @@ pub enum FilterKind {
     GaussianBlur { radius: usize },
     /// Maska wyostrzająca (Unsharp Mask): promień (1..=20 px) i siła (0.1..=5.0).
     UnsharpMask { radius: usize, amount: f32 },
+    /// Desaturacja (Kolory → Desaturacja w GIMP) w wybranym trybie.
+    Desaturate {
+        mode: dziwak_core::desaturate::DesaturateMode,
+    },
 }
 
 impl FilterKind {
@@ -535,6 +539,7 @@ impl FilterKind {
             Self::HueSaturation { .. } => "Odcień i nasycenie",
             Self::GaussianBlur { .. } => "Rozmycie Gaussa",
             Self::UnsharpMask { .. } => "Wyostrzanie",
+            Self::Desaturate { .. } => "Desaturacja",
         }
     }
 
@@ -554,6 +559,7 @@ impl FilterKind {
             Self::UnsharpMask { radius, amount } => {
                 dziwak_core::unsharp_mask(layer, sel, radius, amount)
             }
+            Self::Desaturate { mode } => dziwak_core::desaturate::desaturate(layer, sel, mode),
         }
     }
 }
@@ -4799,6 +4805,24 @@ mod tests {
             amount: 1.5_f32,
         });
         app.apply_filter_dialog();
+    }
+
+    #[test]
+    fn test_desaturate_filter_and_undo() {
+        let mut app = DziwakApp::new();
+        let l = app.doc.active_layer_index;
+        let red = Rgba8::new(200, 50, 50, 255);
+        app.doc.document.layers[l].set_pixel(10, 10, red).unwrap();
+        app.open_filter_dialog(FilterKind::Desaturate {
+            mode: dziwak_core::desaturate::DesaturateMode::Average,
+        });
+        app.apply_filter_dialog();
+        assert_eq!(
+            app.doc.document.layers[l].get_pixel(10, 10),
+            Some(Rgba8::new(100, 100, 100, 255))
+        );
+        let _ = app.handle_undo();
+        assert_eq!(app.doc.document.layers[l].get_pixel(10, 10), Some(red));
     }
 
     #[test]

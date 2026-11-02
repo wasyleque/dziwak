@@ -1,6 +1,6 @@
 # Dziwak
 
-**Polski** | [English](README.en.md)
+**Polski** | [English](README.en.md) | [Español](README.es.md)
 
 Lekki edytor grafiki rastrowej w Ruście z interfejsem w stylu GIMP 2.10 — dla Linuksa (Omarchy, Wayland/Hyprland) i Windows 10/11.
 Licencja GPL-3.0-or-later.
@@ -16,7 +16,7 @@ Około 100 MB RAM, 0% CPU w bezczynności, bez wymagań co do karty graficznej.
 - **Przekształcenia:** przesuwanie, kadrowanie, obrót, skalowanie, odbicie; skalowanie obrazu i rozmiar płótna
 - **Tekst:** jak w GIMP — przeciągasz ramkę i piszesz bezpośrednio na obrazie; warstwa tekstowa powstaje od razu; czcionki systemowe, rozmiar, kolor, wyrównanie, odstęp linii
 - **Zakładki:** wiele obrazów naraz (Ctrl+O, kilka plików w dialogu albo `dziwak a.png b.png`), każdy z własnymi warstwami, historią, zaznaczeniem i widokiem; nieaktywne zakładki zwalniają pamięć karty graficznej, historia cofania ma jeden wspólny limit pamięci
-- **Filtry z podglądem:** jasność/kontrast, odcień/nasycenie, rozmycie Gaussa, wyostrzanie
+- **Filtry z podglądem:** jasność/kontrast, odcień/nasycenie, desaturacja (luminancja, luma, jasność, średnia, wartość — jak w GIMP), rozmycie Gaussa, wyostrzanie
 - **Usuwanie tła:** jednolitego (od krawędzi) oraz AI (U²-Net-p lokalnie na CPU, ok. 1–2 s, bez GPU)
 - **Pliki:** PNG, JPEG, WebP oraz własny format `.dziwak` (warstwy, kompresja LZ4)
 - **Interfejs:** układ GIMP 2.10 Dark z akcentem z motywu Omarchy; język polski, angielski, hiszpański (Edycja → Język)

@@ -39,7 +39,7 @@ pub fn render_filter_dialog(app: &mut DziwakApp, ctx: &egui::Context) {
     let mut should_cancel = false;
     let mut slider_changed = false;
 
-    let title = dialog.kind.title();
+    let title = tr(dialog.kind.title());
     egui::Window::new(title)
         .open(&mut is_open)
         .collapsible(false)
@@ -124,6 +124,21 @@ pub fn render_filter_dialog(app: &mut DziwakApp, ctx: &egui::Context) {
                     );
                     if a_resp.changed() {
                         slider_changed = true;
+                    }
+                }
+                FilterKind::Desaturate { mode } => {
+                    use dziwak_core::desaturate::DesaturateMode as M;
+                    ui.label(tr("Wybierz odcień szarości według:"));
+                    for (m, label) in [
+                        (M::Luminance, tr("Luminancja")),
+                        (M::Luma, tr("Luma")),
+                        (M::Lightness, tr("Jasność (HSL)")),
+                        (M::Average, tr("Średnia (HSI)")),
+                        (M::Value, tr("Wartość (HSV)")),
+                    ] {
+                        if ui.radio_value(mode, m, label).changed() {
+                            slider_changed = true;
+                        }
                     }
                 }
             }

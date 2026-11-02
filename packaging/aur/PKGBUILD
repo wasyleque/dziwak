@@ -51,7 +51,7 @@ package() {
   install -Dm755 target/release/dziwak "$pkgdir/usr/bin/dziwak"
   install -Dm644 data/dziwak.desktop "$pkgdir/usr/share/applications/dziwak.desktop"
   install -Dm644 data/dziwak.svg "$pkgdir/usr/share/icons/hicolor/scalable/apps/dziwak.svg"
-  install -Dm644 README.md README.en.md -t "$pkgdir/usr/share/doc/$_pkgname/"
+  install -Dm644 README.md README.en.md README.es.md -t "$pkgdir/usr/share/doc/$_pkgname/"
   # Model U²-Net-p (Apache-2.0) do usuwania tła AI
   install -Dm644 "$srcdir/u2netp.onnx" "$pkgdir/usr/share/dziwak/models/u2netp.onnx"
 }

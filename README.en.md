@@ -1,6 +1,6 @@
 # Dziwak
 
-[Polski](README.md) | **English**
+[Polski](README.md) | **English** | [Español](README.es.md)
 
 Lightweight raster image editor written in Rust with a GIMP 2.10-style interface — for Linux (Omarchy, Wayland/Hyprland) and Windows 10/11.
 License: GPL-3.0-or-later.
@@ -16,7 +16,7 @@ Approximately 100 MB RAM, 0% CPU when idle, no graphics card requirements.
 - **Transformations:** move, crop, rotate, scale, flip; image scaling and canvas size
 - **Text:** GIMP-style — drag a box and type directly on the image; the text layer is created immediately; system fonts, size, color, alignment, line spacing
 - **Tabs:** several images at once (Ctrl+O, multiple files in the dialog or `dziwak a.png b.png`), each with its own layers, history, selection and view; inactive tabs free GPU memory, undo history shares one memory budget
-- **Filters with live preview:** brightness/contrast, hue/saturation, Gaussian blur, sharpen
+- **Filters with live preview:** brightness/contrast, hue/saturation, desaturate (luminance, luma, lightness, average, value — as in GIMP), Gaussian blur, sharpen
 - **Background removal:** uniform (from edges) and AI (U²-Net-p locally on CPU, ~1–2 s, no GPU)
 - **Files:** PNG, JPEG, WebP and custom `.dziwak` format (layers, LZ4 compression)
 - **Interface:** GIMP 2.10 Dark layout with Omarchy theme accent; Polish, English, Spanish (Edit → Language)

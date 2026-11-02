@@ -370,6 +370,15 @@ pub fn render_menu_bar(
                     });
                     ui.close();
                 }
+                if ui
+                    .add_enabled(has_layers, egui::Button::new(tr("Desaturacja...")))
+                    .clicked()
+                {
+                    app.open_filter_dialog(FilterKind::Desaturate {
+                        mode: Default::default(),
+                    });
+                    ui.close();
+                }
             });
 
             // 8. Narzędzia
