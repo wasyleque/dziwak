@@ -913,6 +913,101 @@ mod text_tool_ui_tests {
     }
 
     #[test]
+    fn text_box_on_photo_tab_after_other_tools() {
+        let dir = std::env::temp_dir().join("dziwak_text_explore");
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("photo.jpg");
+        let mut d = dziwak_core::Document::new(1920, 1080);
+        d.add_layer(dziwak_core::Layer::new("t", 1920, 1080));
+        for y in (0..1080).step_by(3) {
+            for x in (0..1920).step_by(3) {
+                let _ = d.layers[0].set_pixel(
+                    x,
+                    y,
+                    dziwak_core::pixel::Rgba8::new((x % 255) as u8, 90, 120, 255),
+                );
+            }
+        }
+        dziwak_core::save_image(&d, &path).unwrap();
+        let none = egui::Modifiers::NONE;
+        for scenario in 0..4 {
+            let ctx = egui::Context::default();
+            let mut f = eframe::Frame::_new_kittest();
+            let mut app = DziwakApp::new();
+            for _ in 0..3 {
+                frame(&mut app, &ctx, &mut f, vec![]);
+            }
+            if scenario >= 1 {
+                app.open_file_in_new_tab(path.clone());
+                for _ in 0..3 {
+                    frame(&mut app, &ctx, &mut f, vec![]);
+                }
+            }
+            if scenario == 2 {
+                app.set_active_tool(ActiveTool::Smudge);
+                let c = app.doc.transform.canvas_to_screen(egui::pos2(500.0, 500.0));
+                frame(&mut app, &ctx, &mut f, vec![egui::Event::PointerMoved(c)]);
+                frame(&mut app, &ctx, &mut f, vec![button(c, true, none)]);
+                frame(
+                    &mut app,
+                    &ctx,
+                    &mut f,
+                    vec![egui::Event::PointerMoved(c + egui::vec2(30.0, 0.0))],
+                );
+                frame(
+                    &mut app,
+                    &ctx,
+                    &mut f,
+                    vec![button(c + egui::vec2(30.0, 0.0), false, none)],
+                );
+            }
+            if scenario == 3 {
+                // klawisz T jak użytkownik
+                frame(
+                    &mut app,
+                    &ctx,
+                    &mut f,
+                    vec![egui::Event::Key {
+                        key: egui::Key::T,
+                        physical_key: None,
+                        pressed: true,
+                        repeat: false,
+                        modifiers: none,
+                    }],
+                );
+                frame(&mut app, &ctx, &mut f, vec![]);
+            } else {
+                app.set_active_tool(ActiveTool::Text);
+            }
+            let layers_before = app.doc.document.layer_count();
+            let c = app.doc.transform.canvas_to_screen(egui::pos2(
+                app.doc.document.width as f32 / 3.0,
+                app.doc.document.height as f32 / 3.0,
+            ));
+            frame(&mut app, &ctx, &mut f, vec![egui::Event::PointerMoved(c)]);
+            frame(&mut app, &ctx, &mut f, vec![button(c, true, none)]);
+            for k in 1..=5 {
+                frame(
+                    &mut app,
+                    &ctx,
+                    &mut f,
+                    vec![egui::Event::PointerMoved(
+                        c + egui::vec2(40.0 * k as f32, 18.0 * k as f32),
+                    )],
+                );
+            }
+            let c2 = c + egui::vec2(200.0, 90.0);
+            frame(&mut app, &ctx, &mut f, vec![button(c2, false, none)]);
+            frame(&mut app, &ctx, &mut f, vec![]);
+            assert!(
+                app.doc.text_editor.is_some(),
+                "scenariusz {scenario}: przeciągnięcie nie utworzyło ramki tekstu"
+            );
+            assert_eq!(app.doc.document.layer_count(), layers_before + 1);
+        }
+    }
+
+    #[test]
     fn sharpen_brush_does_not_explode() {
         let ctx = egui::Context::default();
         let mut f = eframe::Frame::_new_kittest();

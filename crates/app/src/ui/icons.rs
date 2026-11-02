@@ -236,13 +236,11 @@ pub fn paint_tool_icon_by_kind(painter: &Painter, rect: Rect, icon: ToolIcon, co
             painter.circle_filled(p(0.75, 0.25), 0.12 * rect.width(), color);
         }
         ToolIcon::Text => {
-            // Tekst: litera T z szeryfami
-            painter.line_segment([p(0.22, 0.25), p(0.78, 0.25)], s);
-            painter.line_segment([p(0.50, 0.25), p(0.50, 0.82)], s);
-            // Szeryfy
-            painter.line_segment([p(0.22, 0.25), p(0.22, 0.35)], s);
-            painter.line_segment([p(0.78, 0.25), p(0.78, 0.35)], s);
-            painter.line_segment([p(0.38, 0.82), p(0.62, 0.82)], s);
+            // Tekst: litera „A” jak w GIMP (pogrubiona, z poprzeczką)
+            let bold = Stroke::new(s.width * 1.4, color);
+            painter.line_segment([p(0.22, 0.82), p(0.50, 0.18)], bold);
+            painter.line_segment([p(0.50, 0.18), p(0.78, 0.82)], bold);
+            painter.line_segment([p(0.34, 0.58), p(0.66, 0.58)], s);
         }
         ToolIcon::Zoom => {
             // Lupa: koło i uchwyt
@@ -251,13 +249,18 @@ pub fn paint_tool_icon_by_kind(painter: &Painter, rect: Rect, icon: ToolIcon, co
             painter.line_segment([p(0.58, 0.58), p(0.82, 0.82)], handle_stroke);
         }
         ToolIcon::Measure => {
-            // Miarka / cyrkiel podziałowy
-            painter.circle_filled(p(0.5, 0.22), 0.07 * rect.width(), color);
-            painter.line_segment([p(0.5, 0.25), p(0.26, 0.82)], s);
-            painter.line_segment([p(0.5, 0.25), p(0.74, 0.82)], s);
-            // Łuk / podziałka
-            let arc_stroke = Stroke::new((s.width * 0.75).max(1.0), color);
-            painter.line_segment([p(0.36, 0.60), p(0.64, 0.60)], arc_stroke);
+            // Miarka: ukośna linijka z podziałką (nie może przypominać litery „A” — to ikona Tekstu)
+            painter.line_segment([p(0.15, 0.70), p(0.70, 0.15)], s);
+            painter.line_segment([p(0.30, 0.85), p(0.85, 0.30)], s);
+            painter.line_segment([p(0.15, 0.70), p(0.30, 0.85)], s);
+            painter.line_segment([p(0.70, 0.15), p(0.85, 0.30)], s);
+            let tick = Stroke::new((s.width * 0.75).max(1.0), color);
+            for k in 1..5 {
+                let t = k as f32 * 0.2;
+                let (x, y) = (0.15 + 0.55 * t, 0.70 - 0.55 * t);
+                let len = if k % 2 == 0 { 0.14 } else { 0.08 };
+                painter.line_segment([p(x, y), p(x + len, y + len)], tick);
+            }
         }
         ToolIcon::SelectRect => {
             // Przerywany prostokąt wewnątrz przycisku (0.18..0.82)

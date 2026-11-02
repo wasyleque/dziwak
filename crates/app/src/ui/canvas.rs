@@ -189,6 +189,27 @@ pub fn render_canvas(app: &mut DziwakApp, ctx: &egui::Context, should_fit_to_vie
             }
             let is_primary_down = is_primary_down && app.canvas_owns_pointer;
             let is_middle_down = is_middle_down && app.canvas_owns_pointer;
+            if (any_pressed || is_primary_pressed) && debug_input() {
+                eprintln!(
+                    "[dziwak input] pos={:?} viewport={:?} layer_at={:?} canvas_layer={:?} over_canvas={} owns={} \
+                     tool={:?} filter_dialog={} space={} middle={} alt={} text_editor={} text_drag={:?} moving_box={} painting={}",
+                    hover_pos,
+                    canvas_viewport_rect,
+                    hover_pos.and_then(|p| ctx.layer_id_at(p)),
+                    canvas_layer,
+                    over_canvas,
+                    app.canvas_owns_pointer,
+                    app.active_tool,
+                    app.doc.filter_dialog.is_some(),
+                    space_down,
+                    is_middle_down,
+                    alt_down,
+                    app.doc.text_editor.is_some(),
+                    app.doc.text_drag_start,
+                    app.doc.is_moving_text_box,
+                    app.doc.is_painting,
+                );
+            }
             let is_primary_pressed = is_primary_pressed && over_canvas;
             let is_hovered = over_canvas;
             app.cursor_canvas_pos = if is_hovered {
@@ -1642,4 +1663,10 @@ pub fn render_canvas(app: &mut DziwakApp, ctx: &egui::Context, should_fit_to_vie
                 }
             }
         });
+}
+
+/// Diagnostyka wejścia: `DZIWAK_DEBUG_INPUT=1 dziwak` wypisuje na stderr stan przy każdym kliknięciu na płótnie.
+fn debug_input() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("DZIWAK_DEBUG_INPUT").is_some_and(|v| v != "0"))
 }
